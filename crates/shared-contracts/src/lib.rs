@@ -1,0 +1,260 @@
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use uuid::Uuid;
+
+pub const METHOD_GET_USAGE_SUMMARY: &str = "GET_USAGE_SUMMARY";
+pub const METHOD_GET_APP_BREAKDOWN: &str = "GET_APP_BREAKDOWN";
+pub const METHOD_GET_DAEMON_STATUS: &str = "GET_DAEMON_STATUS";
+pub const METHOD_SET_SETTINGS: &str = "SET_SETTINGS";
+pub const METHOD_GET_SETTINGS: &str = "GET_SETTINGS";
+pub const METHOD_GET_AFK_AUDIT: &str = "GET_AFK_AUDIT";
+pub const METHOD_SUBSCRIBE_EVENTS: &str = "SUBSCRIBE_EVENTS";
+pub const METHOD_INGEST_ATTRIBUTED_USAGE: &str = "INGEST_ATTRIBUTED_USAGE";
+pub const METHOD_SET_IMPORT_STATUS: &str = "SET_IMPORT_STATUS";
+pub const METHOD_GET_INTERFACES: &str = "GET_INTERFACES";
+pub const METHOD_GET_INTERFACE_BREAKDOWN: &str = "GET_INTERFACE_BREAKDOWN";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MessageType {
+    Request,
+    Response,
+    Event,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IpcError {
+    pub code: i32,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IpcMessage {
+    pub id: Option<Uuid>,
+    #[serde(rename = "type")]
+    pub message_type: MessageType,
+    pub method: String,
+    pub payload: Value,
+    pub error: Option<IpcError>,
+}
+
+impl IpcMessage {
+    pub fn request(method: impl Into<String>, payload: impl Serialize) -> serde_json::Result<Self> {
+        Ok(Self {
+            id: Some(Uuid::new_v4()),
+            message_type: MessageType::Request,
+            method: method.into(),
+            payload: serde_json::to_value(payload)?,
+            error: None,
+        })
+    }
+
+    pub fn response<T: Serialize>(req: &IpcMessage, payload: T) -> serde_json::Result<Self> {
+        Ok(Self {
+            id: req.id,
+            message_type: MessageType::Response,
+            method: req.method.clone(),
+            payload: serde_json::to_value(payload)?,
+            error: None,
+        })
+    }
+
+    pub fn error_response(req: &IpcMessage, code: i32, message: impl Into<String>) -> Self {
+        Self {
+            id: req.id,
+            message_type: MessageType::Response,
+            method: req.method.clone(),
+            payload: Value::Null,
+            error: Some(IpcError {
+                code,
+                message: message.into(),
+            }),
+        }
+    }
+
+    pub fn event(method: impl Into<String>, payload: impl Serialize) -> serde_json::Result<Self> {
+        Ok(Self {
+            id: None,
+            message_type: MessageType::Event,
+            method: method.into(),
+            payload: serde_json::to_value(payload)?,
+            error: None,
+        })
+    }
+
+    pub fn from_line(line: &str) -> serde_json::Result<Self> {
+        serde_json::from_str(line)
+    }
+
+    pub fn to_line(&self) -> serde_json::Result<String> {
+        let mut text = serde_json::to_string(self)?;
+        text.push('\n');
+        Ok(text)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimeRangeRequest {
+    pub start_ts: i64,
+    pub end_ts: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageSummaryRequest {
+    pub start_ts: i64,
+    pub end_ts: i64,
+    pub granularity: String,
+    pub interface_id: Option<String>,
+    pub interface_type: Option<String>,
+    pub app_filter: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageBucket {
+    pub ts: i64,
+    pub bytes_sent: u64,
+    pub bytes_recv: u64,
+    pub interface_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageSummaryResponse {
+    pub buckets: Vec<UsageBucket>,
+    pub total_sent: u64,
+    pub total_recv: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppBreakdownRequest {
+    pub start_ts: i64,
+    pub end_ts: i64,
+    pub interface_id: Option<String>,
+    pub interface_type: Option<String>,
+    pub limit: Option<u32>,
+    pub sort_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppUsageRow {
+    pub process_name: String,
+    pub display_name: String,
+    pub bytes_sent: u64,
+    pub bytes_recv: u64,
+    pub last_seen_ts: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppBreakdownResponse {
+    pub apps: Vec<AppUsageRow>,
+    pub total_apps: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterfaceInfo {
+    pub guid: String,
+    pub name: String,
+    pub interface_type: String,
+    pub is_metered: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetInterfacesResponse {
+    pub interfaces: Vec<InterfaceInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterfaceBreakdownRequest {
+    pub start_ts: i64,
+    pub end_ts: i64,
+    pub interface_id: Option<String>,
+    pub interface_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterfaceUsageRow {
+    pub interface_id: String,
+    pub interface_name: String,
+    pub interface_type: String,
+    pub is_metered: bool,
+    pub bytes_sent: u64,
+    pub bytes_recv: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterfaceBreakdownResponse {
+    pub interfaces: Vec<InterfaceUsageRow>,
+    pub total_interfaces: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaemonStatusResponse {
+    pub version: String,
+    pub uptime_seconds: u64,
+    pub memory_bytes: u64,
+    pub cpu_percent_1m: f64,
+    pub last_poll_ts: i64,
+    pub next_poll_ts: i64,
+    pub poll_interval_seconds: u32,
+    pub db_size_bytes: u64,
+    pub import_status: String,
+    pub import_progress_pct: u8,
+    pub attribution_mode: String,
+    pub last_helper_ingest_ts: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetSettingsRequest {
+    pub poll_interval_seconds: Option<u32>,
+    pub retention_days: Option<u32>,
+    pub afk_idle_threshold_seconds: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsResponse {
+    pub poll_interval_seconds: u32,
+    pub retention_days: u32,
+    pub afk_idle_threshold_seconds: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetImportStatusRequest {
+    pub status: String,
+    pub progress_pct: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AfkWindowUsage {
+    pub start_ts: i64,
+    pub end_ts: i64,
+    pub duration_seconds: u32,
+    pub bytes_sent: u64,
+    pub bytes_recv: u64,
+    pub top_apps: Vec<AppUsageRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AfkAuditResponse {
+    pub afk_windows: Vec<AfkWindowUsage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttributedUsageSample {
+    pub attribution_id: String,
+    pub bytes_sent: u64,
+    pub bytes_recv: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IngestAttributedUsageRequest {
+    pub start_ts: i64,
+    pub end_ts: i64,
+    pub profile_name: Option<String>,
+    pub source: Option<String>,
+    pub samples: Vec<AttributedUsageSample>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IngestAttributedUsageResponse {
+    pub accepted: u32,
+    pub dropped: u32,
+}

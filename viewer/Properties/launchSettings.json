@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "SingularityMonitor.Viewer (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "SingularityMonitor.Viewer (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

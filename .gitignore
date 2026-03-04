@@ -1,0 +1,12 @@
+/target/
+/runtime-data/
+/*.db
+/*.db-wal
+/*.db-shm
+
+/viewer/bin/
+/viewer/obj/
+
+*.pdb
+*.log
+*.tmp

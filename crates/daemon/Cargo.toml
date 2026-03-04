@@ -1,0 +1,29 @@
+[package]
+name = "daemon"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+ctrlc = "3.4"
+rusqlite = { version = "0.33", features = ["bundled"] }
+serde_json = "1.0"
+shared-contracts = { path = "../shared-contracts" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "json", "time"] }
+windows = { version = "0.62", features = [
+    "Foundation",
+    "Networking_Connectivity",
+] }
+windows-service = "0.7"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+] }
