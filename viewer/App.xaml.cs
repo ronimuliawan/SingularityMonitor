@@ -1,4 +1,7 @@
 using Microsoft.UI.Xaml.Navigation;
+using Microsoft.UI.Windowing;
+using SingularityMonitor.Viewer.Services;
+using WinRT.Interop;
 
 namespace SingularityMonitor.Viewer
 {
@@ -8,6 +11,10 @@ namespace SingularityMonitor.Viewer
     public partial class App : Application
     {
         private Window? window;
+        private AppWindow? appWindow;
+        private TrayIconController? trayIconController;
+        private bool suppressCloseToTray;
+        private bool isClosingHandlerAttached;
 
         /// <summary>
         /// Initializes the singleton application object.  This is the first line of authored code
@@ -16,6 +23,7 @@ namespace SingularityMonitor.Viewer
         public App()
         {
             this.InitializeComponent();
+            AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
         }
 
         /// <summary>
@@ -26,6 +34,7 @@ namespace SingularityMonitor.Viewer
         protected override void OnLaunched(LaunchActivatedEventArgs e)
         {
             window ??= new Window();
+            EnsureAppWindowHooks();
 
             if (window.Content is not Frame rootFrame)
             {
@@ -35,7 +44,13 @@ namespace SingularityMonitor.Viewer
             }
 
             _ = rootFrame.Navigate(typeof(MainPage), e.Arguments);
-            window.Activate();
+            ShowMainWindow();
+
+            trayIconController ??= new TrayIconController(
+                dispatcherQueue: window.DispatcherQueue,
+                openDashboard: ActivateMainWindow,
+                exitApplication: ExitApplication);
+            trayIconController.Start();
         }
 
         /// <summary>
@@ -46,6 +61,61 @@ namespace SingularityMonitor.Viewer
         void OnNavigationFailed(object sender, NavigationFailedEventArgs e)
         {
             throw new Exception("Failed to load Page " + e.SourcePageType.FullName);
+        }
+
+        private void ActivateMainWindow()
+        {
+            ShowMainWindow();
+        }
+
+        private void ExitApplication()
+        {
+            suppressCloseToTray = true;
+            DisposeTrayIcon();
+            window?.Close();
+            Exit();
+        }
+
+        private void OnMainWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
+        {
+            if (suppressCloseToTray)
+            {
+                return;
+            }
+
+            args.Cancel = true;
+            sender.Hide();
+        }
+
+        private void OnProcessExit(object? sender, EventArgs e)
+        {
+            DisposeTrayIcon();
+        }
+
+        private void DisposeTrayIcon()
+        {
+            trayIconController?.Dispose();
+            trayIconController = null;
+        }
+
+        private void EnsureAppWindowHooks()
+        {
+            if (window is null || isClosingHandlerAttached)
+            {
+                return;
+            }
+
+            var windowHandle = WindowNative.GetWindowHandle(window);
+            var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(windowHandle);
+            appWindow = AppWindow.GetFromWindowId(windowId);
+            appWindow.Closing += OnMainWindowClosing;
+            isClosingHandlerAttached = true;
+        }
+
+        private void ShowMainWindow()
+        {
+            appWindow?.Show();
+            window?.Activate();
         }
     }
 }

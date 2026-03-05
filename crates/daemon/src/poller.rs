@@ -1,9 +1,9 @@
 use crate::metered;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::ffi::c_void;
 use tracing::warn;
-use windows_sys::core::GUID;
 use windows_sys::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2, MIB_IF_TABLE2};
+use windows_sys::core::GUID;
 
 #[derive(Debug, Clone)]
 pub struct InterfaceSnapshot {

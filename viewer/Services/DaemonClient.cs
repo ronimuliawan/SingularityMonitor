@@ -42,6 +42,11 @@ public sealed class DaemonClient
         uint? pollIntervalSeconds = null,
         uint? retentionDays = null,
         uint? afkIdleThresholdSeconds = null,
+        bool? onboardingCompleted = null,
+        string? exportDefaultGranularity = null,
+        bool? exportDefaultIncludeSummary = null,
+        bool? exportDefaultIncludeApps = null,
+        bool? exportDefaultIncludeInterfaces = null,
         CancellationToken cancellationToken = default)
     {
         var envelope = await SendRequestAsync(
@@ -51,6 +56,11 @@ public sealed class DaemonClient
                 poll_interval_seconds = pollIntervalSeconds,
                 retention_days = retentionDays,
                 afk_idle_threshold_seconds = afkIdleThresholdSeconds,
+                onboarding_completed = onboardingCompleted,
+                export_default_granularity = exportDefaultGranularity,
+                export_default_include_summary = exportDefaultIncludeSummary,
+                export_default_include_apps = exportDefaultIncludeApps,
+                export_default_include_interfaces = exportDefaultIncludeInterfaces,
             },
             cancellationToken);
 
@@ -116,9 +126,11 @@ public sealed class DaemonClient
         int limit = 12,
         string? interfaceId = null,
         string? interfaceType = null,
+        string? sortBy = null,
         CancellationToken cancellationToken = default)
     {
         var normalizedLimit = Math.Max(1, limit);
+        var normalizedSortBy = NormalizeAppBreakdownSort(sortBy);
 
         var envelope = await SendRequestAsync(
             "GET_APP_BREAKDOWN",
@@ -129,11 +141,19 @@ public sealed class DaemonClient
                 interface_id = interfaceId,
                 interface_type = interfaceType,
                 limit = normalizedLimit,
-                sort_by = "total_bytes_desc",
+                sort_by = normalizedSortBy,
             },
             cancellationToken);
 
         return ParsePayload<AppBreakdown>(envelope);
+    }
+
+    private static string NormalizeAppBreakdownSort(string? sortBy)
+    {
+        var normalized = sortBy?.Trim().ToLowerInvariant();
+        return normalized is "total_bytes_desc" or "bytes_sent_desc" or "bytes_recv_desc" or "display_name_asc"
+            ? normalized
+            : "total_bytes_desc";
     }
 
     public async Task<InterfaceListResponse> GetInterfacesAsync(CancellationToken cancellationToken = default)
@@ -165,6 +185,80 @@ public sealed class DaemonClient
             cancellationToken);
 
         return ParsePayload<InterfaceBreakdownResponse>(envelope);
+    }
+
+    public async Task<CapDefinitionsResponse> ListCapDefinitionsAsync(CancellationToken cancellationToken = default)
+    {
+        var envelope = await SendRequestAsync(
+            "LIST_CAP_DEFINITIONS",
+            payload: new { },
+            cancellationToken);
+
+        return ParsePayload<CapDefinitionsResponse>(envelope);
+    }
+
+    public async Task<CapDefinitionUpsertResponse> UpsertCapDefinitionAsync(
+        string scope,
+        ulong monthlyCapBytes,
+        bool isActive,
+        string? interfaceGuid = null,
+        long? id = null,
+        CancellationToken cancellationToken = default)
+    {
+        var envelope = await SendRequestAsync(
+            "UPSERT_CAP_DEFINITION",
+            payload: new
+            {
+                id,
+                scope,
+                interface_guid = interfaceGuid,
+                monthly_cap_bytes = monthlyCapBytes,
+                is_active = isActive,
+            },
+            cancellationToken);
+
+        return ParsePayload<CapDefinitionUpsertResponse>(envelope);
+    }
+
+    public async Task<CapDefinitionDeleteResponse> DeleteCapDefinitionAsync(
+        long id,
+        CancellationToken cancellationToken = default)
+    {
+        var envelope = await SendRequestAsync(
+            "DELETE_CAP_DEFINITION",
+            payload: new { id },
+            cancellationToken);
+
+        return ParsePayload<CapDefinitionDeleteResponse>(envelope);
+    }
+
+    public async Task<CapAlertEventsResponse> ListCapAlertEventsAsync(
+        long? startTs = null,
+        long? endTs = null,
+        string? scope = null,
+        string? interfaceGuid = null,
+        string? windowKind = null,
+        string? thresholdKind = null,
+        int limit = 200,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedLimit = Math.Clamp(limit, 1, 1000);
+
+        var envelope = await SendRequestAsync(
+            "LIST_CAP_ALERT_EVENTS",
+            payload: new
+            {
+                start_ts = startTs,
+                end_ts = endTs,
+                scope,
+                interface_guid = interfaceGuid,
+                window_kind = windowKind,
+                threshold_kind = thresholdKind,
+                limit = normalizedLimit,
+            },
+            cancellationToken);
+
+        return ParsePayload<CapAlertEventsResponse>(envelope);
     }
 
     private static T ParsePayload<T>(IpcEnvelope envelope)
@@ -264,6 +358,21 @@ public sealed class SettingsResponse
 
     [JsonPropertyName("afk_idle_threshold_seconds")]
     public uint AfkIdleThresholdSeconds { get; set; }
+
+    [JsonPropertyName("onboarding_completed")]
+    public bool OnboardingCompleted { get; set; }
+
+    [JsonPropertyName("export_default_granularity")]
+    public string ExportDefaultGranularity { get; set; } = "day";
+
+    [JsonPropertyName("export_default_include_summary")]
+    public bool ExportDefaultIncludeSummary { get; set; } = true;
+
+    [JsonPropertyName("export_default_include_apps")]
+    public bool ExportDefaultIncludeApps { get; set; } = true;
+
+    [JsonPropertyName("export_default_include_interfaces")]
+    public bool ExportDefaultIncludeInterfaces { get; set; } = true;
 }
 
 public sealed class UsageSummary
@@ -360,6 +469,99 @@ public sealed class InterfaceUsageRow
 
     [JsonPropertyName("bytes_recv")]
     public ulong BytesRecv { get; set; }
+}
+
+public sealed class CapDefinitionsResponse
+{
+    [JsonPropertyName("caps")]
+    public CapDefinition[] Caps { get; set; } = Array.Empty<CapDefinition>();
+}
+
+public sealed class CapDefinitionUpsertResponse
+{
+    [JsonPropertyName("cap")]
+    public CapDefinition Cap { get; set; } = new();
+}
+
+public sealed class CapDefinitionDeleteResponse
+{
+    [JsonPropertyName("deleted")]
+    public bool Deleted { get; set; }
+}
+
+public sealed class CapDefinition
+{
+    [JsonPropertyName("id")]
+    public long Id { get; set; }
+
+    [JsonPropertyName("scope")]
+    public string Scope { get; set; } = string.Empty;
+
+    [JsonPropertyName("interface_guid")]
+    public string? InterfaceGuid { get; set; }
+
+    [JsonPropertyName("monthly_cap_bytes")]
+    public ulong MonthlyCapBytes { get; set; }
+
+    [JsonPropertyName("is_active")]
+    public bool IsActive { get; set; }
+
+    [JsonPropertyName("created_at")]
+    public long CreatedAt { get; set; }
+
+    [JsonPropertyName("updated_at")]
+    public long UpdatedAt { get; set; }
+}
+
+public sealed class CapAlertEventsResponse
+{
+    [JsonPropertyName("events")]
+    public CapAlertEvent[] Events { get; set; } = Array.Empty<CapAlertEvent>();
+}
+
+public sealed class CapAlertEvent
+{
+    [JsonPropertyName("id")]
+    public long Id { get; set; }
+
+    [JsonPropertyName("cap_definition_id")]
+    public long CapDefinitionId { get; set; }
+
+    [JsonPropertyName("scope")]
+    public string Scope { get; set; } = string.Empty;
+
+    [JsonPropertyName("interface_guid")]
+    public string? InterfaceGuid { get; set; }
+
+    [JsonPropertyName("window_kind")]
+    public string WindowKind { get; set; } = string.Empty;
+
+    [JsonPropertyName("window_start_ts")]
+    public long WindowStartTs { get; set; }
+
+    [JsonPropertyName("window_end_ts")]
+    public long WindowEndTs { get; set; }
+
+    [JsonPropertyName("threshold_kind")]
+    public string ThresholdKind { get; set; } = string.Empty;
+
+    [JsonPropertyName("threshold_value")]
+    public ulong ThresholdValue { get; set; }
+
+    [JsonPropertyName("usage_bytes")]
+    public ulong UsageBytes { get; set; }
+
+    [JsonPropertyName("cap_bytes")]
+    public ulong CapBytes { get; set; }
+
+    [JsonPropertyName("fired_at")]
+    public long FiredAt { get; set; }
+
+    [JsonPropertyName("delivery_state")]
+    public string DeliveryState { get; set; } = string.Empty;
+
+    [JsonPropertyName("delivered_at")]
+    public long? DeliveredAt { get; set; }
 }
 
 public sealed class IpcEnvelope

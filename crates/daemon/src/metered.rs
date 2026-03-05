@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::collections::HashMap;
-use windows::core::GUID;
 use windows::Networking::Connectivity::{ConnectionProfile, NetworkCostType, NetworkInformation};
+use windows::core::GUID;
 
 pub fn collect_interface_metered_map() -> Result<HashMap<String, bool>> {
     let mut metered_by_guid = HashMap::new();

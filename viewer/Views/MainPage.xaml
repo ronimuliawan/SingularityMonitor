@@ -20,11 +20,25 @@
                 <TextBlock FontSize="30" Style="{StaticResource HeaderTextStyle}" Text="Singularity Monitor" />
                 <TextBlock Foreground="#D4DCE2" Text="Low-footprint network telemetry for Windows 11." />
 
+                <Border x:Name="OnboardingCard" Background="#213441" CornerRadius="12" Padding="16" Visibility="Collapsed">
+                    <StackPanel Spacing="10">
+                        <TextBlock FontSize="18" Style="{StaticResource HeaderTextStyle}" Text="First-run setup" />
+                        <TextBlock Foreground="#D4DCE2" Text="Import the last 60 days once so charts and app breakdowns start with historical context. This runs in the helper process and can take a few minutes." TextWrapping="Wrap" />
+                        <TextBlock x:Name="OnboardingStatusText" Foreground="#BFD0DE" Text="" TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button x:Name="OnboardingImportButton" Click="OnOnboardingImportClicked" Content="Run Initial 60-Day Import" Style="{StaticResource PrimaryAction}" />
+                            <Button x:Name="OnboardingSkipButton" Click="OnOnboardingSkipClicked" Content="Skip and hide" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <TextBlock VerticalAlignment="Center" Foreground="#B5C5D3" Text="Interface" />
                     <ComboBox x:Name="InterfaceFilterComboBox" MinWidth="260" SelectionChanged="OnInterfaceFilterChanged" />
                     <TextBlock VerticalAlignment="Center" Foreground="#B5C5D3" Text="Export Granularity" />
                     <ComboBox x:Name="ExportGranularityComboBox" MinWidth="140" />
+                    <TextBlock VerticalAlignment="Center" Foreground="#B5C5D3" Text="Apps" />
+                    <ComboBox x:Name="ExportAppScopeComboBox" MinWidth="170" />
                     <Button Click="OnExportCsvClicked" Content="Export CSV" />
                     <Button Click="OnExportJsonClicked" Content="Export JSON" />
                 </StackPanel>
@@ -33,6 +47,11 @@
                     <CheckBox x:Name="IncludeSummaryCheckBox" Content="Summary buckets" IsChecked="True" />
                     <CheckBox x:Name="IncludeAppsCheckBox" Content="Apps" IsChecked="True" />
                     <CheckBox x:Name="IncludeInterfacesCheckBox" Content="Interfaces" IsChecked="True" />
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock VerticalAlignment="Center" Foreground="#B5C5D3" Text="Overview Mode" />
+                    <ComboBox x:Name="OverviewModeComboBox" MinWidth="220" SelectionChanged="OnOverviewModeChanged" />
                 </StackPanel>
 
                 <Grid ColumnSpacing="12">
@@ -44,25 +63,31 @@
 
                     <Border Grid.Column="0" Background="#1F2A33" CornerRadius="12" Padding="14">
                         <StackPanel Spacing="4">
-                            <TextBlock Foreground="#B5C5D3" Text="Today" />
+                            <TextBlock x:Name="TodayCardTitleText" Foreground="#B5C5D3" Text="Today" />
                             <TextBlock x:Name="TodayTotalText" FontSize="22" Style="{StaticResource HeaderTextStyle}" Text="-" />
                             <TextBlock x:Name="TodaySplitText" Foreground="#BFD0DE" Text="-" />
+                            <ProgressBar x:Name="TodayUploadShareBar" Height="8" Maximum="100" Minimum="0" Value="0" />
+                            <TextBlock x:Name="TodayUploadShareText" Foreground="#9AAEBE" FontSize="12" Text="Upload share -" />
                         </StackPanel>
                     </Border>
 
                     <Border Grid.Column="1" Background="#1F2A33" CornerRadius="12" Padding="14">
                         <StackPanel Spacing="4">
-                            <TextBlock Foreground="#B5C5D3" Text="This Week" />
+                            <TextBlock x:Name="WeekCardTitleText" Foreground="#B5C5D3" Text="This Week" />
                             <TextBlock x:Name="WeekTotalText" FontSize="22" Style="{StaticResource HeaderTextStyle}" Text="-" />
                             <TextBlock x:Name="WeekSplitText" Foreground="#BFD0DE" Text="-" />
+                            <ProgressBar x:Name="WeekUploadShareBar" Height="8" Maximum="100" Minimum="0" Value="0" />
+                            <TextBlock x:Name="WeekUploadShareText" Foreground="#9AAEBE" FontSize="12" Text="Upload share -" />
                         </StackPanel>
                     </Border>
 
                     <Border Grid.Column="2" Background="#1F2A33" CornerRadius="12" Padding="14">
                         <StackPanel Spacing="4">
-                            <TextBlock Foreground="#B5C5D3" Text="This Month" />
+                            <TextBlock x:Name="MonthCardTitleText" Foreground="#B5C5D3" Text="This Month" />
                             <TextBlock x:Name="MonthTotalText" FontSize="22" Style="{StaticResource HeaderTextStyle}" Text="-" />
                             <TextBlock x:Name="MonthSplitText" Foreground="#BFD0DE" Text="-" />
+                            <ProgressBar x:Name="MonthUploadShareBar" Height="8" Maximum="100" Minimum="0" Value="0" />
+                            <TextBlock x:Name="MonthUploadShareText" Foreground="#9AAEBE" FontSize="12" Text="Upload share -" />
                         </StackPanel>
                     </Border>
                 </Grid>
@@ -96,6 +121,10 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
                             <TextBlock Grid.Row="0" VerticalAlignment="Center" Foreground="#B5C5D3" Text="Poll interval (seconds)" />
@@ -109,6 +138,22 @@
                             <TextBlock Grid.Row="2" VerticalAlignment="Center" Foreground="#B5C5D3" Text="AFK idle threshold (seconds)" />
                             <NumberBox Grid.Row="2" Grid.Column="1" x:Name="AfkIdleThresholdNumberBox" Minimum="30" Maximum="3600" SmallChange="30" SpinButtonPlacementMode="Inline" />
                             <TextBlock Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" Foreground="#9AAEBE" Text="Used by upcoming AFK audit pipeline." TextWrapping="Wrap" />
+
+                            <TextBlock Grid.Row="3" VerticalAlignment="Center" Foreground="#B5C5D3" Text="Default export granularity" />
+                            <ComboBox Grid.Row="3" Grid.Column="1" x:Name="SettingsExportGranularityComboBox" MinWidth="140" />
+                            <TextBlock Grid.Row="3" Grid.Column="2" VerticalAlignment="Center" Foreground="#9AAEBE" Text="Applied when settings load and after reset defaults." TextWrapping="Wrap" />
+
+                            <TextBlock Grid.Row="4" VerticalAlignment="Center" Foreground="#B5C5D3" Text="Default export includes summary" />
+                            <CheckBox Grid.Row="4" Grid.Column="1" x:Name="SettingsIncludeSummaryCheckBox" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="4" Grid.Column="2" VerticalAlignment="Center" Foreground="#9AAEBE" Text="Controls default Summary buckets checkbox for exports." TextWrapping="Wrap" />
+
+                            <TextBlock Grid.Row="5" VerticalAlignment="Center" Foreground="#B5C5D3" Text="Default export includes apps" />
+                            <CheckBox Grid.Row="5" Grid.Column="1" x:Name="SettingsIncludeAppsCheckBox" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="5" Grid.Column="2" VerticalAlignment="Center" Foreground="#9AAEBE" Text="Controls default Apps checkbox for exports." TextWrapping="Wrap" />
+
+                            <TextBlock Grid.Row="6" VerticalAlignment="Center" Foreground="#B5C5D3" Text="Default export includes interfaces" />
+                            <CheckBox Grid.Row="6" Grid.Column="1" x:Name="SettingsIncludeInterfacesCheckBox" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="6" Grid.Column="2" VerticalAlignment="Center" Foreground="#9AAEBE" Text="Controls default Interfaces checkbox for exports." TextWrapping="Wrap" />
                         </Grid>
 
                         <StackPanel Orientation="Horizontal" Spacing="8">
@@ -138,26 +183,140 @@
                         </StackPanel>
 
                         <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock VerticalAlignment="Center" Foreground="#B5C5D3" Text="Preset" />
+                            <ComboBox x:Name="RangePresetComboBox" MinWidth="180" SelectionChanged="OnRangePresetChanged" />
                             <TextBlock VerticalAlignment="Center" Foreground="#B5C5D3" Text="From" />
-                            <DatePicker x:Name="StartDatePicker" />
+                            <DatePicker x:Name="StartDatePicker" DateChanged="OnDateRangeChanged" />
                             <TextBlock VerticalAlignment="Center" Foreground="#B5C5D3" Text="To" />
-                            <DatePicker x:Name="EndDatePicker" />
+                            <DatePicker x:Name="EndDatePicker" DateChanged="OnDateRangeChanged" />
                             <Button Click="OnApplyRangeClicked" Content="Apply Range" />
                         </StackPanel>
+
+                        <TextBlock Foreground="#9AAEBE" FontSize="12" Text="Grouping keeps core OS traffic in System and low-volume apps in Other (&lt; 1 MB each)." TextWrapping="Wrap" />
 
                         <ListView x:Name="TopAppsList" Height="280" SelectionMode="Single" SelectionChanged="OnTopAppSelectionChanged">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
-                                    <StackPanel Spacing="2">
+                                    <StackPanel Spacing="4">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="28" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="220" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <Border Width="20" Height="20" CornerRadius="10" Background="#243744" VerticalAlignment="Center" HorizontalAlignment="Center">
+                                                <TextBlock Foreground="{Binding IconForeground}" HorizontalAlignment="Center" VerticalAlignment="Center" Text="{Binding IconGlyph}" FontFamily="Segoe MDL2 Assets" FontSize="12" />
+                                            </Border>
+
+                                            <TextBlock Grid.Column="1" Foreground="#E6EDF3" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="2" Foreground="#BFD0DE" HorizontalAlignment="Right" Text="{Binding UsageText}" />
+                                        </Grid>
+
                                         <Grid ColumnSpacing="10">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="220" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Foreground="#E6EDF3" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Grid.Column="1" Foreground="#BFD0DE" HorizontalAlignment="Right" Text="{Binding UsageText}" />
+                                            <TextBlock Foreground="#9AAEBE" FontSize="12" Text="{Binding ProcessText}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Foreground="#9AAEBE" FontSize="12" HorizontalAlignment="Right" Text="{Binding LastSeenText}" TextTrimming="CharacterEllipsis" />
                                         </Grid>
-                                        <TextBlock Foreground="#9AAEBE" FontSize="12" Text="{Binding DetailText}" TextTrimming="CharacterEllipsis" />
+
+                                        <TextBlock Foreground="#8FA4B4" FontSize="12" Text="{Binding TransferSplitText}" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </StackPanel>
+                </Border>
+
+                <Border Background="#1F2A33" CornerRadius="12" Padding="16">
+                    <StackPanel Spacing="10">
+                        <TextBlock FontSize="18" Style="{StaticResource HeaderTextStyle}" Text="Monthly Caps" />
+
+                        <Grid ColumnSpacing="10" RowSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="220" />
+                                <ColumnDefinition Width="220" />
+                                <ColumnDefinition Width="180" />
+                                <ColumnDefinition Width="140" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Foreground="#B5C5D3" Text="Scope" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Foreground="#B5C5D3" Text="Interface" />
+                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Foreground="#B5C5D3" Text="Monthly cap (GB)" />
+                            <TextBlock Grid.Column="3" VerticalAlignment="Center" Foreground="#B5C5D3" Text="Active" />
+
+                            <ComboBox Grid.Row="1" Grid.Column="0" x:Name="CapScopeComboBox" SelectionChanged="OnCapScopeChanged" MinWidth="180" />
+                            <ComboBox Grid.Row="1" Grid.Column="1" x:Name="CapInterfaceComboBox" MinWidth="200" />
+                            <NumberBox Grid.Row="1" Grid.Column="2" x:Name="CapMonthlyGbNumberBox" Minimum="1" Maximum="1048576" SmallChange="1" SpinButtonPlacementMode="Inline" />
+                            <ToggleSwitch Grid.Row="1" Grid.Column="3" x:Name="CapActiveToggle" OnContent="On" OffContent="Off" />
+
+                            <StackPanel Grid.Row="1" Grid.Column="4" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <Button x:Name="SaveCapButton" Click="OnSaveCapClicked" Content="Save / Update" Style="{StaticResource PrimaryAction}" />
+                                <Button x:Name="DeleteCapButton" Click="OnDeleteCapClicked" Content="Delete Selected" />
+                            </StackPanel>
+                        </Grid>
+
+                        <ListView x:Name="CapDefinitionsList" Height="180" SelectionMode="Single" SelectionChanged="OnCapSelectionChanged">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="180" />
+                                            <ColumnDefinition Width="120" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Foreground="#E6EDF3" Text="{Binding ScopeText}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="1" Foreground="#BFD0DE" HorizontalAlignment="Right" Text="{Binding CapText}" />
+                                        <TextBlock Grid.Column="2" Foreground="#9AAEBE" HorizontalAlignment="Right" Text="{Binding ActiveText}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+
+                        <TextBlock x:Name="CapStatusText" Foreground="#BFD0DE" Text="Create a global or per-interface monthly cap." TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <Border Background="#1F2A33" CornerRadius="12" Padding="16">
+                    <StackPanel Spacing="8">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock FontSize="18" Style="{StaticResource HeaderTextStyle}" Text="Alerts History" />
+                            <TextBlock x:Name="AlertsHistoryRangeText" Foreground="#BFD0DE" Text="(selected range)" />
+                            <Button x:Name="RefreshAlertsHistoryButton" Click="OnRefreshAlertsHistoryClicked" Content="Refresh Alerts" />
+                        </StackPanel>
+
+                        <TextBlock x:Name="AlertsHistoryStatusText" Foreground="#9AAEBE" Text="No alerts in selected range." TextWrapping="Wrap" />
+
+                        <ListView x:Name="AlertsHistoryList" Height="220" SelectionMode="None" IsItemClickEnabled="False" IsTabStop="False">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Spacing="4">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="170" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Foreground="#E6EDF3" Text="{Binding TitleText}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Foreground="#BFD0DE" HorizontalAlignment="Right" Text="{Binding FiredAtText}" />
+                                        </Grid>
+
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="170" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Foreground="#9AAEBE" FontSize="12" Text="{Binding ScopeText}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Foreground="#9AAEBE" FontSize="12" HorizontalAlignment="Right" Text="{Binding UsageText}" TextTrimming="CharacterEllipsis" />
+                                        </Grid>
+
+                                        <TextBlock Foreground="#8FA4B4" FontSize="12" Text="{Binding WindowText}" TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
@@ -176,6 +335,39 @@
                         </StackPanel>
 
                         <TextBlock x:Name="AppDetailSummaryText" Foreground="#D4DCE2" Text="Pick an app to view time series buckets." TextWrapping="Wrap" />
+
+                        <TextBlock FontSize="16" Style="{StaticResource HeaderTextStyle}" Text="Time-Series Chart" />
+                        <TextBlock x:Name="AppDetailChartStatusText" Foreground="#9AAEBE" Text="No chart data for the selected app and range." TextWrapping="Wrap" Visibility="Collapsed" />
+
+                        <ListView x:Name="AppDetailChartList" Height="220" SelectionMode="None" IsItemClickEnabled="False" IsTabStop="False">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Spacing="4">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="150" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Foreground="#E6EDF3" Text="{Binding BucketLabel}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Foreground="#BFD0DE" HorizontalAlignment="Right" Text="{Binding UsageText}" />
+                                        </Grid>
+
+                                        <ProgressBar Height="8" Maximum="100" Minimum="0" Value="{Binding RelativePercent}" />
+
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="150" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Foreground="#9AAEBE" FontSize="12" Text="{Binding SplitText}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Foreground="#9AAEBE" FontSize="12" HorizontalAlignment="Right" Text="{Binding RelativeText}" />
+                                        </Grid>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+
+                        <TextBlock FontSize="16" Style="{StaticResource HeaderTextStyle}" Text="Bucket Table" />
 
                         <ListView x:Name="AppDetailBucketsList" Height="220" SelectionMode="None">
                             <ListView.ItemTemplate>
@@ -215,6 +407,37 @@
                                         <TextBlock Foreground="#E6EDF3" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
                                         <TextBlock Grid.Column="1" Foreground="#BFD0DE" HorizontalAlignment="Right" Text="{Binding UsageText}" />
                                     </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+
+                        <TextBlock FontSize="16" Style="{StaticResource HeaderTextStyle}" Text="Usage Share Chart" />
+                        <TextBlock x:Name="InterfaceBreakdownChartStatusText" Foreground="#9AAEBE" Text="No interface chart data in this range." TextWrapping="Wrap" Visibility="Collapsed" />
+
+                        <ListView x:Name="InterfaceBreakdownChartList" Height="220" SelectionMode="None" IsItemClickEnabled="False" IsTabStop="False">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Spacing="4">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="120" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Foreground="#E6EDF3" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Foreground="#BFD0DE" HorizontalAlignment="Right" Text="{Binding TotalText}" />
+                                        </Grid>
+
+                                        <ProgressBar Height="8" Maximum="100" Minimum="0" Value="{Binding SharePercent}" />
+
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="120" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Foreground="#9AAEBE" FontSize="12" Text="{Binding SplitText}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Foreground="#9AAEBE" FontSize="12" HorizontalAlignment="Right" Text="{Binding ShareText}" />
+                                        </Grid>
+                                    </StackPanel>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>

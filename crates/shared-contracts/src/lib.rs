@@ -8,11 +8,16 @@ pub const METHOD_GET_DAEMON_STATUS: &str = "GET_DAEMON_STATUS";
 pub const METHOD_SET_SETTINGS: &str = "SET_SETTINGS";
 pub const METHOD_GET_SETTINGS: &str = "GET_SETTINGS";
 pub const METHOD_GET_AFK_AUDIT: &str = "GET_AFK_AUDIT";
+pub const METHOD_UPSERT_AFK_WINDOW: &str = "UPSERT_AFK_WINDOW";
 pub const METHOD_SUBSCRIBE_EVENTS: &str = "SUBSCRIBE_EVENTS";
 pub const METHOD_INGEST_ATTRIBUTED_USAGE: &str = "INGEST_ATTRIBUTED_USAGE";
 pub const METHOD_SET_IMPORT_STATUS: &str = "SET_IMPORT_STATUS";
 pub const METHOD_GET_INTERFACES: &str = "GET_INTERFACES";
 pub const METHOD_GET_INTERFACE_BREAKDOWN: &str = "GET_INTERFACE_BREAKDOWN";
+pub const METHOD_LIST_CAP_DEFINITIONS: &str = "LIST_CAP_DEFINITIONS";
+pub const METHOD_UPSERT_CAP_DEFINITION: &str = "UPSERT_CAP_DEFINITION";
+pub const METHOD_DELETE_CAP_DEFINITION: &str = "DELETE_CAP_DEFINITION";
+pub const METHOD_LIST_CAP_ALERT_EVENTS: &str = "LIST_CAP_ALERT_EVENTS";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -187,6 +192,80 @@ pub struct InterfaceBreakdownResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapDefinition {
+    pub id: i64,
+    pub scope: String,
+    pub interface_guid: Option<String>,
+    pub monthly_cap_bytes: u64,
+    pub is_active: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListCapDefinitionsResponse {
+    pub caps: Vec<CapDefinition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpsertCapDefinitionRequest {
+    pub id: Option<i64>,
+    pub scope: String,
+    pub interface_guid: Option<String>,
+    pub monthly_cap_bytes: u64,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpsertCapDefinitionResponse {
+    pub cap: CapDefinition,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteCapDefinitionRequest {
+    pub id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteCapDefinitionResponse {
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListCapAlertEventsRequest {
+    pub start_ts: Option<i64>,
+    pub end_ts: Option<i64>,
+    pub scope: Option<String>,
+    pub interface_guid: Option<String>,
+    pub window_kind: Option<String>,
+    pub threshold_kind: Option<String>,
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapAlertEvent {
+    pub id: i64,
+    pub cap_definition_id: i64,
+    pub scope: String,
+    pub interface_guid: Option<String>,
+    pub window_kind: String,
+    pub window_start_ts: i64,
+    pub window_end_ts: i64,
+    pub threshold_kind: String,
+    pub threshold_value: u64,
+    pub usage_bytes: u64,
+    pub cap_bytes: u64,
+    pub fired_at: i64,
+    pub delivery_state: String,
+    pub delivered_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListCapAlertEventsResponse {
+    pub events: Vec<CapAlertEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonStatusResponse {
     pub version: String,
     pub uptime_seconds: u64,
@@ -207,6 +286,11 @@ pub struct SetSettingsRequest {
     pub poll_interval_seconds: Option<u32>,
     pub retention_days: Option<u32>,
     pub afk_idle_threshold_seconds: Option<u32>,
+    pub onboarding_completed: Option<bool>,
+    pub export_default_granularity: Option<String>,
+    pub export_default_include_summary: Option<bool>,
+    pub export_default_include_apps: Option<bool>,
+    pub export_default_include_interfaces: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -214,6 +298,11 @@ pub struct SettingsResponse {
     pub poll_interval_seconds: u32,
     pub retention_days: u32,
     pub afk_idle_threshold_seconds: u32,
+    pub onboarding_completed: bool,
+    pub export_default_granularity: String,
+    pub export_default_include_summary: bool,
+    pub export_default_include_apps: bool,
+    pub export_default_include_interfaces: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

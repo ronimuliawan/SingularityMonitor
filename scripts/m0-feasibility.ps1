@@ -1,7 +1,8 @@
 param(
     [int]$Samples = 5,
     [int]$IntervalMs = 1000,
-    [UInt64]$MaxBytes = 5242880
+    [UInt64]$MaxBytes = 5242880,
+    [switch]$SkipHelperProbe
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,8 +11,13 @@ $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 Write-Host "Building release artifacts..."
 & (Join-Path $PSScriptRoot "build-rust.cmd") --release
 
-Write-Host "Running helper attribution probe..."
-& (Join-Path $root "target\release\helper.exe") | Out-Host
+if (-not $SkipHelperProbe) {
+    Write-Host "Running helper attribution probe..."
+    & (Join-Path $root "target\release\helper.exe") | Out-Host
+}
+else {
+    Write-Host "Skipping helper attribution probe."
+}
 
 Write-Host "Starting daemon console..."
 $daemon = Start-Process -FilePath (Join-Path $root "target\release\daemon.exe") -ArgumentList "--console" -PassThru

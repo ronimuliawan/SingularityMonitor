@@ -50,12 +50,35 @@
 - **App analytics UX expansion:** top-app list now supports sort modes (total/upload/download/name) with grouped "System" and "Other (<1 MB)" rows.
 - **App detail drill-down:** selecting an app now loads per-app time-series buckets for the selected range, interface scope, and granularity.
 
+## App detail and sorting polish (P0-13/P0-14)
+
+- **App detail chart parity:** app detail section now includes a built-in time-series chart-style panel (bar rows over bucket series) alongside the bucket table.
+- **Backend sort parity:** `GET_APP_BREAKDOWN` now honors requested sort mode (`total/upload/download/name`) and applies deterministic SQL tie-break ordering before limit.
+- **Viewer sort propagation:** top-app refresh now forwards selected sort mode to daemon to avoid high-cardinality truncation bias from client-only resorting.
+- **Selection continuity:** top-app selection now resolves across both regroup directions (app->group and group->app fallback when grouping boundaries change).
+- **System grouping parity:** unknown/unattributed process rows are now folded into the `System` aggregate group.
+- **Top-app readability polish:** app rows now show process, last-seen, and transfer split in clearer dedicated fields.
+
+## Dashboard range and mode integration (P0-08/P0-09/P0-10/P0-11)
+
+- **Overview mode toggle:** dashboard summary cards now support `Calendar` mode and `Selected Range` mode.
+- **Range preset controls:** date range selection now supports presets (`Today`, `Last 7 Days`, `Last 30 Days`, `Custom`) and synchronizes with date pickers.
+- **Range refresh parity:** applying range/preset now refreshes overview, top-app breakdown, app detail, and interface breakdown together.
+- **Interface-filtered summary action:** summary action now respects active interface filter and overview mode/range.
+- **Split visualization polish:** overview cards now include upload-share visual indicators (progress bar + percent text) alongside existing upload/download totals.
+
+## Interface breakdown chart parity (P0-12)
+
+- **Interface chart panel:** interface breakdown view now includes a chart-style usage-share panel (horizontal bars) in addition to the interface table.
+- **Chart metrics:** each row now shows total usage, upload/download split text, and percent share of selected range.
+- **Parity behavior:** chart and table both follow the same selected date range and interface filter scope.
+
 ## Collector hardening (P0 continuity)
 
 - **Sleep/resume-aware interval handling:** daemon now computes observed elapsed seconds from wall-clock poll timestamps and scales anomaly budget to that interval.
 - **Counter regression guardrails:** when counters move backwards (reset/regression), daemon only accepts bounded reset deltas and suppresses oversized regression spikes.
 - **Metered profile sync:** poller now attempts WinRT connection-profile cost mapping to persist per-interface metered flags (`is_metered`) in the `interfaces` table.
-- **Unit tests added:** coverage includes first-sample behavior, scaled anomaly budget behavior, regression suppression, reset handling, and observed-interval resolution.
+- **Unit tests expanded:** coverage now includes first-sample behavior, scaled anomaly budget behavior, forward-anomaly suppression recovery, regression suppression recovery, mixed-counter regression/growth behavior, reset handling, and observed-interval resolution.
 - **Source cutover dedupe logic:** analytics queries now enforce source precedence to prevent overlap double-counting (`helper` preferred over recent `import` for app analytics, `interface_poll`/real-interface presence preferred over recent `import` for total summaries).
 - **App detail source fix:** `GET_USAGE_SUMMARY` now switches to helper/import-backed aggregation when an `app_filter` is supplied.
 
@@ -67,6 +90,62 @@
   - app breakdown excludes post-helper-cutover import rows
   - app-filtered summary aligns with app breakdown totals under overlap
 
+## P0 export performance validation
+
+- **Export perf harness:** `scripts/p0-16-export-perf-smoke.ps1` seeds 1-year hourly synthetic history and times export-query IPC sequence (`GET_USAGE_SUMMARY`, `GET_APP_BREAKDOWN`, `GET_INTERFACE_BREAKDOWN`).
+- **Gate enforcement:** script fails if combined query flow exceeds 5000ms (`MaxTotalMs` configurable).
+- **Latest run:** full query sequence completed in ~0.50s on current environment, under the P0 threshold.
+- **Export parity completion:** export flow now supports app scope filtering (`All apps` vs `Selected app`) and records app filter metadata in both CSV and JSON outputs.
+
+## P0 accuracy harness
+
+- **Accuracy smoke harness:** `scripts/p0-07-accuracy-smoke.ps1` now compares daemon summary totals against OS byte counters (`netstat -e`) over poll-aligned windows.
+- **Quality gates:** default threshold is `<= 0.1%` absolute deviation with low-traffic guard (`MinTotalBytes`) to avoid meaningless pass/fail outcomes.
+- **Latest run:** observed deviation ~`0.018%` over a ~182s window (pass vs `0.1%` target).
+- **Stability hardening:** harness now supports retry attempts (`MaxAttempts`) to reduce false failures during bursty traffic windows.
+
+## Alerts threshold engine baseline (P1-02)
+
+- **Runtime evaluation hooks:** daemon now evaluates cap thresholds after each poll write and immediately after cap upsert operations.
+- **Threshold coverage:** active cap definitions now emit one-shot monthly threshold events at `50%`, `80%`, and `95%`, plus a daily cap event derived from `ceil(monthly_cap_bytes/30)`.
+- **Event persistence model:** new `cap_alert_events` table stores threshold crossings with window scope, usage/cap bytes, and delivery state, with unique dedupe across `(cap, window, threshold)`.
+- **Idempotency tests:** daemon DB tests now validate once-per-window dedupe and progressive threshold firing as usage grows.
+- **Post-change gate check:** `scripts/r-02-performance-gates.ps1` re-run passes all gates after threshold engine integration.
+
+## Alerts history tab baseline (P1-03)
+
+- **Alert history IPC:** shared contracts now expose `LIST_CAP_ALERT_EVENTS` with typed request/response DTOs for cap alert history queries.
+- **Daemon query path:** daemon now serves filtered/limited alert history from `cap_alert_events` ordered newest-first, with scope/window/threshold filters for viewer usage.
+- **Viewer panel:** main page now includes an `Alerts History` panel with refresh action and selected-range context, showing threshold label, scope, usage vs cap, fired time, and window text.
+- **Cap workflow wiring:** cap create/update/delete and global refresh flows now refresh alerts history so the panel tracks newly emitted threshold events.
+- **Regression coverage:** daemon tests now verify alert-history ordering/limit behavior and scope+threshold filter behavior.
+
+## R-02 performance gates automation
+
+- **Gate orchestrator:** added `scripts/r-02-performance-gates.ps1` to enforce RSS, query latency, import duration, and daemon CPU gates with fail-fast behavior.
+- **Script hardening:** `scripts/m0-feasibility.ps1` now supports `-SkipHelperProbe` for deterministic CI/perf-gate runs.
+- **Import status race hardening:** R-02 import gate now polls daemon status after helper import completion and waits for `import_status=complete` before final timing assertion.
+- **CI integration:** `.github/workflows/ci.yml` now executes R-02 baseline performance gates on Windows after build/test.
+- **Latest run:** all four gates passed after race hardening (RSS, query latency, import duration, CPU 1m).
+
+## Tray and tooltip baseline
+
+- **Tray controller:** viewer now initializes a process tray icon with context menu actions (`Open Dashboard`, `Refresh Tooltip`, `Exit`).
+- **Tooltip updates:** tray tooltip now surfaces current-day usage and refreshes periodically, with daemon-offline fallback text.
+- **Close-to-tray behavior:** main window close now hides to tray; tray open action restores and activates the dashboard window.
+- **Lifecycle cleanup:** tray resources are disposed on explicit exit/process shutdown paths with cancellation-safe refresh loop teardown.
+
+## First-run onboarding flow (P0-05)
+
+- **Onboarding state persistence:** daemon settings now include `onboarding_completed` in `GET_SETTINGS`/`SET_SETTINGS` and persist it in SQLite.
+- **Viewer onboarding card:** first-run users now see a dedicated setup card with guided initial import and skip actions.
+- **Guided import completion:** onboarding import path reuses helper 60-day import flow and marks onboarding complete on successful completion; skip action also persists completion.
+
+## Metered flag validation (P0-04)
+
+- **Validation smoke automation:** `scripts/m3-metered-flag-smoke.ps1` validates `GET_INTERFACES` and `GET_INTERFACE_BREAKDOWN` payload shape, interface type normalization, and metered boolean fields.
+- **Latest run:** interfaces discovered with metered/unmetered counts reported and API validation checks passing.
+
 ## Settings and hot-reload wiring
 
 - **Settings query IPC:** daemon now exposes `GET_SETTINGS` with `poll_interval_seconds`, `retention_days`, and `afk_idle_threshold_seconds` sourced from SQLite settings.
@@ -74,6 +153,19 @@
 - **Viewer settings controls:** main page now includes collector settings controls with apply and reset-default flows.
 - **Hot-reload path:** viewer settings writes call `SET_SETTINGS`, then refresh daemon status/settings to verify poll-interval hot reload behavior.
 - **Hot-reload smoke automation:** `scripts/m4-settings-hotreload-smoke.ps1` validates status/settings convergence after runtime settings updates.
+- **Export default settings:** daemon/viewer settings now include export defaults (`granularity`, `include summary/apps/interfaces`) and apply/reset these values through the same hot-reload path.
+- **Hot-reload validation expansion:** M4 smoke now verifies the full settings surface (including onboarding and export defaults) and granularity normalization behavior.
+
+## Sleep/resume continuity harness (P0-02)
+
+- **Continuity smoke automation:** `scripts/m3-sleep-resume-continuity-smoke.ps1` suspends/resumes the daemon process to emulate sleep/hibernate gaps and validates post-resume polling behavior.
+- **DB-level continuity checks:** script verifies post-resume poll rows, long observed `interval_secs` capture, and oversize anomaly suppression in the observed interval window.
+- **Latest run:** observed long interval ~95s after a 35s suspend simulation with zero oversize anomaly rows.
+
+## CI baseline (R-01)
+
+- **GitHub Actions workflow:** added `.github/workflows/ci.yml` for push/pull_request validation.
+- **CI scope:** runs on Windows with Rust workspace build/tests plus viewer Release build.
 
 ## Delivered components
 
@@ -87,8 +179,6 @@
 
 ## Outstanding work by phase
 
-- **P0 completion:**
-  - full export controls (granularity and field-selection parity pending)
-  - complete dashboard chart modes and full interface parity
-- **P1:** alerts engine, toast routing via helper/session bridge, AFK joins
+- **P0 completion:** all tracked P0 items are complete.
+- **P1:** toast routing while viewer is closed, AFK timeline + AFK export UI, retention/compact workflows
 - **P2:** heatmap, forecasting, anomaly model, confidence interval surfaces

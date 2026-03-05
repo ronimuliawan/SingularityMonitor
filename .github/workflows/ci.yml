@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Rust workspace
+        run: cargo build --workspace
+
+      - name: Test Rust workspace
+        run: cargo test --workspace
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build viewer (Release)
+        run: dotnet build "viewer/SingularityMonitor.Viewer.csproj" -c Release
+
+      - name: Run R-02 baseline performance gates
+        shell: powershell
+        run: >
+          powershell -ExecutionPolicy Bypass -File scripts/r-02-performance-gates.ps1
+          -MaxRssBytes 6291456
+          -MaxQueryTotalMs 5000
+          -QueryHistoryHours 720
+          -MaxImportDurationMs 30000
+          -ImportDays 2
+          -ImportChunkHours 1
+          -MaxCpuPercent1m 5.0
+          -CpuSampleCount 8
+          -CpuSampleIntervalMs 1000

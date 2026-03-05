@@ -1,12 +1,15 @@
 use crate::delta::InterfaceDelta;
 use crate::poller::InterfaceSnapshot;
 use anyhow::{Context, Result};
-use rusqlite::{named_params, params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, named_params, params};
 use shared_contracts::{
-    AfkAuditResponse, AppBreakdownRequest, AppBreakdownResponse, AppUsageRow,
+    AfkAuditResponse, AfkWindowUsage, AppBreakdownRequest, AppBreakdownResponse, AppUsageRow,
+    CapAlertEvent, CapDefinition, DeleteCapDefinitionRequest, DeleteCapDefinitionResponse,
     GetInterfacesResponse, IngestAttributedUsageRequest, IngestAttributedUsageResponse,
     InterfaceBreakdownRequest, InterfaceBreakdownResponse, InterfaceInfo, InterfaceUsageRow,
-    SetSettingsRequest, SettingsResponse, UsageBucket, UsageSummaryRequest, UsageSummaryResponse,
+    ListCapAlertEventsRequest, ListCapAlertEventsResponse, ListCapDefinitionsResponse,
+    SetSettingsRequest, SettingsResponse, UpsertCapDefinitionRequest, UpsertCapDefinitionResponse,
+    UsageBucket, UsageSummaryRequest, UsageSummaryResponse,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,10 +17,24 @@ use std::sync::Arc;
 const SYSTEM_PROCESS_NAME: &str = "System";
 const ATTRIBUTION_INTERFACE_GUID: &str = "{11111111-1111-1111-1111-111111111111}";
 const ATTRIBUTION_INTERFACE_NAME: &str = "Attributed Usage";
+const CAP_SCOPE_GLOBAL: &str = "global";
+const CAP_SCOPE_INTERFACE: &str = "interface";
+const CAP_ALERT_WINDOW_MONTHLY: &str = "monthly";
+const CAP_ALERT_WINDOW_DAILY: &str = "daily";
+const CAP_ALERT_DELIVERY_NEW: &str = "new";
+const CAP_ALERT_THRESHOLDS_PCT: [u64; 3] = [50, 80, 95];
 
 #[derive(Clone)]
 pub struct Db {
     path: Arc<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+struct ActiveCapDefinition {
+    id: i64,
+    scope: String,
+    interface_guid: Option<String>,
+    monthly_cap_bytes: u64,
 }
 
 impl Db {
@@ -58,12 +75,39 @@ impl Db {
         let afk_idle_threshold_seconds = read_setting_u32(&conn, "afk_idle_threshold_seconds")?
             .unwrap_or(300)
             .clamp(30, 3600);
+        let onboarding_completed =
+            read_setting_bool(&conn, "onboarding_completed")?.unwrap_or(false);
+        let export_default_granularity = normalize_granularity(
+            read_setting_string(&conn, "export_default_granularity")?
+                .as_deref()
+                .unwrap_or("day"),
+        )
+        .to_string();
+        let export_default_include_summary =
+            read_setting_bool(&conn, "export_default_include_summary")?.unwrap_or(true);
+        let export_default_include_apps =
+            read_setting_bool(&conn, "export_default_include_apps")?.unwrap_or(true);
+        let export_default_include_interfaces =
+            read_setting_bool(&conn, "export_default_include_interfaces")?.unwrap_or(true);
 
         Ok(SettingsResponse {
             poll_interval_seconds,
             retention_days,
             afk_idle_threshold_seconds,
+            onboarding_completed,
+            export_default_granularity,
+            export_default_include_summary,
+            export_default_include_apps,
+            export_default_include_interfaces,
         })
+    }
+
+    pub fn get_afk_idle_threshold_seconds(&self, default: u32) -> Result<u32> {
+        let conn = self.open_connection()?;
+        let threshold = read_setting_u32(&conn, "afk_idle_threshold_seconds")?
+            .unwrap_or(default)
+            .clamp(30, 3600);
+        Ok(threshold)
     }
 
     pub fn apply_settings(&self, ts: i64, settings: &SetSettingsRequest) -> Result<()> {
@@ -102,6 +146,71 @@ impl Db {
                 "
                 INSERT INTO settings(key, value, updated_at)
                 VALUES('afk_idle_threshold_seconds', ?1, ?2)
+                ON CONFLICT(key)
+                DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                ",
+                params![value, ts],
+            )?;
+        }
+
+        if let Some(onboarding_completed) = settings.onboarding_completed {
+            let value = if onboarding_completed { "1" } else { "0" };
+            tx.execute(
+                "
+                INSERT INTO settings(key, value, updated_at)
+                VALUES('onboarding_completed', ?1, ?2)
+                ON CONFLICT(key)
+                DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                ",
+                params![value, ts],
+            )?;
+        }
+
+        if let Some(granularity) = settings.export_default_granularity.as_deref() {
+            let value = normalize_granularity(granularity);
+            tx.execute(
+                "
+                INSERT INTO settings(key, value, updated_at)
+                VALUES('export_default_granularity', ?1, ?2)
+                ON CONFLICT(key)
+                DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                ",
+                params![value, ts],
+            )?;
+        }
+
+        if let Some(include_summary) = settings.export_default_include_summary {
+            let value = if include_summary { "1" } else { "0" };
+            tx.execute(
+                "
+                INSERT INTO settings(key, value, updated_at)
+                VALUES('export_default_include_summary', ?1, ?2)
+                ON CONFLICT(key)
+                DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                ",
+                params![value, ts],
+            )?;
+        }
+
+        if let Some(include_apps) = settings.export_default_include_apps {
+            let value = if include_apps { "1" } else { "0" };
+            tx.execute(
+                "
+                INSERT INTO settings(key, value, updated_at)
+                VALUES('export_default_include_apps', ?1, ?2)
+                ON CONFLICT(key)
+                DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                ",
+                params![value, ts],
+            )?;
+        }
+
+        if let Some(include_interfaces) = settings.export_default_include_interfaces {
+            let value = if include_interfaces { "1" } else { "0" };
+            tx.execute(
+                "
+                INSERT INTO settings(key, value, updated_at)
+                VALUES('export_default_include_interfaces', ?1, ?2)
                 ON CONFLICT(key)
                 DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
                 ",
@@ -441,7 +550,8 @@ impl Db {
     pub fn query_app_breakdown(&self, req: &AppBreakdownRequest) -> Result<AppBreakdownResponse> {
         let conn = self.open_connection()?;
         let limit = req.limit.unwrap_or(50).min(500);
-        let mut stmt = conn.prepare(
+        let order_by = resolve_app_breakdown_order_by(req.sort_by.as_deref());
+        let sql = format!(
             "
             WITH helper_cutover AS (
                 SELECT MIN(ts) AS ts
@@ -467,10 +577,11 @@ impl Db {
                   OR (ur.source = 'import' AND (hc.ts IS NULL OR ur.ts < hc.ts))
               )
             GROUP BY a.id, a.process_name, display_name
-            ORDER BY (sent + recv) DESC
+            ORDER BY {order_by}
             LIMIT :limit
-            ",
-        )?;
+            "
+        );
+        let mut stmt = conn.prepare(&sql)?;
 
         let rows = stmt.query_map(
             named_params! {
@@ -573,10 +684,475 @@ impl Db {
         })
     }
 
-    pub fn query_afk_audit(&self) -> Result<AfkAuditResponse> {
-        Ok(AfkAuditResponse {
-            afk_windows: Vec::new(),
+    pub fn list_cap_definitions(&self) -> Result<ListCapDefinitionsResponse> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(
+            "
+            SELECT id, scope, interface_guid, monthly_cap_bytes, is_active, created_at, updated_at
+            FROM monthly_cap_definitions
+            ORDER BY scope ASC, COALESCE(interface_guid, ''), id ASC
+            ",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(CapDefinition {
+                id: row.get::<_, i64>(0)?,
+                scope: row.get::<_, String>(1)?,
+                interface_guid: row.get::<_, Option<String>>(2)?,
+                monthly_cap_bytes: row.get::<_, i64>(3)?.max(0) as u64,
+                is_active: row.get::<_, i64>(4)? != 0,
+                created_at: row.get::<_, i64>(5)?,
+                updated_at: row.get::<_, i64>(6)?,
+            })
+        })?;
+
+        let caps = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(ListCapDefinitionsResponse { caps })
+    }
+
+    pub fn upsert_cap_definition(
+        &self,
+        ts: i64,
+        payload: &UpsertCapDefinitionRequest,
+    ) -> Result<UpsertCapDefinitionResponse> {
+        let mut conn = self.open_connection()?;
+        let tx = conn.transaction()?;
+
+        let normalized_scope = match payload.scope.trim().to_ascii_lowercase().as_str() {
+            CAP_SCOPE_GLOBAL => CAP_SCOPE_GLOBAL,
+            CAP_SCOPE_INTERFACE => CAP_SCOPE_INTERFACE,
+            _ => anyhow::bail!("invalid scope"),
+        };
+        let normalized_interface_guid =
+            normalize_cap_interface_guid(normalized_scope, payload.interface_guid.as_deref())?;
+        let monthly_cap_bytes = payload.monthly_cap_bytes.clamp(1, i64::MAX as u64) as i64;
+        let is_active = if payload.is_active { 1_i64 } else { 0_i64 };
+
+        if let Some(id) = payload.id {
+            tx.execute(
+                "
+                UPDATE monthly_cap_definitions
+                SET scope = ?2,
+                    interface_guid = ?3,
+                    monthly_cap_bytes = ?4,
+                    is_active = ?5,
+                    updated_at = ?6
+                WHERE id = ?1
+                ",
+                params![
+                    id,
+                    normalized_scope,
+                    normalized_interface_guid,
+                    monthly_cap_bytes,
+                    is_active,
+                    ts,
+                ],
+            )?;
+        }
+
+        tx.execute(
+            "
+            INSERT INTO monthly_cap_definitions(
+                scope,
+                interface_guid,
+                monthly_cap_bytes,
+                is_active,
+                created_at,
+                updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+            ON CONFLICT(scope, interface_guid)
+            DO UPDATE SET
+                monthly_cap_bytes = excluded.monthly_cap_bytes,
+                is_active = excluded.is_active,
+                updated_at = excluded.updated_at
+            ",
+            params![
+                normalized_scope,
+                normalized_interface_guid,
+                monthly_cap_bytes,
+                is_active,
+                ts,
+            ],
+        )?;
+
+        let cap = tx.query_row(
+            "
+            SELECT id, scope, interface_guid, monthly_cap_bytes, is_active, created_at, updated_at
+            FROM monthly_cap_definitions
+            WHERE scope = ?1
+              AND ((interface_guid IS NULL AND ?2 IS NULL) OR interface_guid = ?2)
+            LIMIT 1
+            ",
+            params![normalized_scope, normalized_interface_guid],
+            |row| {
+                Ok(CapDefinition {
+                    id: row.get::<_, i64>(0)?,
+                    scope: row.get::<_, String>(1)?,
+                    interface_guid: row.get::<_, Option<String>>(2)?,
+                    monthly_cap_bytes: row.get::<_, i64>(3)?.max(0) as u64,
+                    is_active: row.get::<_, i64>(4)? != 0,
+                    created_at: row.get::<_, i64>(5)?,
+                    updated_at: row.get::<_, i64>(6)?,
+                })
+            },
+        )?;
+
+        tx.commit()?;
+        Ok(UpsertCapDefinitionResponse { cap })
+    }
+
+    pub fn delete_cap_definition(
+        &self,
+        payload: &DeleteCapDefinitionRequest,
+    ) -> Result<DeleteCapDefinitionResponse> {
+        let conn = self.open_connection()?;
+        let deleted = conn.execute(
+            "DELETE FROM monthly_cap_definitions WHERE id = ?1",
+            params![payload.id],
+        )?;
+        Ok(DeleteCapDefinitionResponse {
+            deleted: deleted > 0,
         })
+    }
+
+    pub fn list_cap_alert_events(
+        &self,
+        req: &ListCapAlertEventsRequest,
+    ) -> Result<ListCapAlertEventsResponse> {
+        let conn = self.open_connection()?;
+        let limit = req.limit.unwrap_or(200).clamp(1, 1000);
+        let scope = normalize_cap_alert_scope_filter(req.scope.as_deref());
+        let interface_guid = req
+            .interface_guid
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let window_kind = normalize_cap_alert_window_filter(req.window_kind.as_deref());
+        let threshold_kind = normalize_cap_alert_threshold_filter(req.threshold_kind.as_deref());
+
+        let mut stmt = conn.prepare(
+            "
+            SELECT
+                id,
+                cap_definition_id,
+                scope,
+                interface_guid,
+                window_kind,
+                window_start_ts,
+                window_end_ts,
+                threshold_kind,
+                threshold_value,
+                usage_bytes,
+                cap_bytes,
+                fired_at,
+                delivery_state,
+                delivered_at
+            FROM cap_alert_events
+            WHERE (:start_ts IS NULL OR fired_at >= :start_ts)
+              AND (:end_ts IS NULL OR fired_at < :end_ts)
+              AND (:scope IS NULL OR scope = :scope)
+              AND (:interface_guid IS NULL OR interface_guid = :interface_guid)
+              AND (:window_kind IS NULL OR window_kind = :window_kind)
+              AND (:threshold_kind IS NULL OR threshold_kind = :threshold_kind)
+            ORDER BY fired_at DESC, id DESC
+            LIMIT :limit
+            ",
+        )?;
+
+        let rows = stmt.query_map(
+            named_params! {
+                ":start_ts": req.start_ts,
+                ":end_ts": req.end_ts,
+                ":scope": scope.as_deref(),
+                ":interface_guid": interface_guid,
+                ":window_kind": window_kind.as_deref(),
+                ":threshold_kind": threshold_kind.as_deref(),
+                ":limit": i64::from(limit),
+            },
+            |row| {
+                Ok(CapAlertEvent {
+                    id: row.get::<_, i64>(0)?,
+                    cap_definition_id: row.get::<_, i64>(1)?,
+                    scope: row.get::<_, String>(2)?,
+                    interface_guid: row.get::<_, Option<String>>(3)?,
+                    window_kind: row.get::<_, String>(4)?,
+                    window_start_ts: row.get::<_, i64>(5)?,
+                    window_end_ts: row.get::<_, i64>(6)?,
+                    threshold_kind: row.get::<_, String>(7)?,
+                    threshold_value: row.get::<_, i64>(8)?.max(0) as u64,
+                    usage_bytes: row.get::<_, i64>(9)?.max(0) as u64,
+                    cap_bytes: row.get::<_, i64>(10)?.max(0) as u64,
+                    fired_at: row.get::<_, i64>(11)?,
+                    delivery_state: row.get::<_, String>(12)?,
+                    delivered_at: row.get::<_, Option<i64>>(13)?,
+                })
+            },
+        )?;
+
+        let events = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(ListCapAlertEventsResponse { events })
+    }
+
+    pub fn evaluate_cap_alerts(&self, now_ts: i64) -> Result<usize> {
+        if now_ts <= 0 {
+            return Ok(0);
+        }
+
+        let conn = self.open_connection()?;
+        let caps = list_active_cap_definitions(&conn)?;
+        if caps.is_empty() {
+            return Ok(0);
+        }
+
+        let month_start_ts = utc_month_start_ts(&conn, now_ts)?;
+        let day_start_ts = utc_day_start_ts(now_ts);
+        let end_ts = now_ts.saturating_add(1);
+        let mut inserted = 0usize;
+
+        for cap in caps {
+            let monthly_usage = query_cap_usage_bytes(
+                &conn,
+                month_start_ts,
+                end_ts,
+                cap.interface_guid.as_deref(),
+            )?;
+
+            for threshold_percent in CAP_ALERT_THRESHOLDS_PCT {
+                let threshold_bytes =
+                    threshold_bytes_for_percent(cap.monthly_cap_bytes, threshold_percent);
+                if threshold_bytes == 0 || monthly_usage < threshold_bytes {
+                    continue;
+                }
+
+                let threshold_kind = match threshold_percent {
+                    50 => "pct_50",
+                    80 => "pct_80",
+                    95 => "pct_95",
+                    _ => continue,
+                };
+
+                let was_inserted = insert_cap_alert_event(
+                    &conn,
+                    cap.id,
+                    &cap.scope,
+                    cap.interface_guid.as_deref(),
+                    CAP_ALERT_WINDOW_MONTHLY,
+                    month_start_ts,
+                    end_ts,
+                    threshold_kind,
+                    threshold_percent,
+                    monthly_usage,
+                    cap.monthly_cap_bytes,
+                    now_ts,
+                )?;
+                if was_inserted {
+                    inserted = inserted.saturating_add(1);
+                }
+            }
+
+            let daily_cap_bytes = derive_daily_cap_bytes(cap.monthly_cap_bytes);
+            let daily_usage =
+                query_cap_usage_bytes(&conn, day_start_ts, end_ts, cap.interface_guid.as_deref())?;
+            if daily_usage >= daily_cap_bytes {
+                let was_inserted = insert_cap_alert_event(
+                    &conn,
+                    cap.id,
+                    &cap.scope,
+                    cap.interface_guid.as_deref(),
+                    CAP_ALERT_WINDOW_DAILY,
+                    day_start_ts,
+                    end_ts,
+                    "daily_cap",
+                    daily_cap_bytes,
+                    daily_usage,
+                    daily_cap_bytes,
+                    now_ts,
+                )?;
+                if was_inserted {
+                    inserted = inserted.saturating_add(1);
+                }
+            }
+        }
+
+        Ok(inserted)
+    }
+
+    pub fn query_afk_audit(&self) -> Result<AfkAuditResponse> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(
+            "
+            SELECT start_ts, end_ts
+            FROM afk_windows
+            ORDER BY start_ts DESC
+            LIMIT 100
+            ",
+        )?;
+
+        let windows =
+            stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
+
+        let mut afk_windows = Vec::new();
+        for window in windows {
+            let (start_ts, end_ts) = window?;
+            let duration_seconds = end_ts
+                .saturating_sub(start_ts)
+                .clamp(0, i64::from(u32::MAX)) as u32;
+            let exclusive_end = end_ts.saturating_add(1);
+
+            let (bytes_sent, bytes_recv) = conn.query_row(
+                "
+                WITH helper_cutover AS (
+                    SELECT MIN(ts) AS ts
+                    FROM usage_records
+                    WHERE source = 'helper'
+                )
+                SELECT
+                    COALESCE(SUM(ur.bytes_sent), 0) AS sent,
+                    COALESCE(SUM(ur.bytes_recv), 0) AS recv
+                FROM usage_records ur
+                CROSS JOIN helper_cutover hc
+                WHERE ur.ts >= ?1
+                  AND ur.ts < ?2
+                  AND (
+                      ur.source = 'helper'
+                      OR (ur.source = 'import' AND (hc.ts IS NULL OR ur.ts < hc.ts))
+                  )
+                ",
+                params![start_ts, exclusive_end],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?.max(0) as u64,
+                        row.get::<_, i64>(1)?.max(0) as u64,
+                    ))
+                },
+            )?;
+
+            let mut top_stmt = conn.prepare(
+                "
+                WITH helper_cutover AS (
+                    SELECT MIN(ts) AS ts
+                    FROM usage_records
+                    WHERE source = 'helper'
+                )
+                SELECT
+                    a.process_name,
+                    COALESCE(a.display_name, a.process_name) AS display_name,
+                    SUM(ur.bytes_sent) AS sent,
+                    SUM(ur.bytes_recv) AS recv,
+                    MAX(ur.ts) AS last_seen
+                FROM usage_records ur
+                JOIN apps a ON a.id = ur.app_id
+                CROSS JOIN helper_cutover hc
+                WHERE ur.ts >= ?1
+                  AND ur.ts < ?2
+                  AND (
+                      ur.source = 'helper'
+                      OR (ur.source = 'import' AND (hc.ts IS NULL OR ur.ts < hc.ts))
+                  )
+                GROUP BY a.id, a.process_name, display_name
+                ORDER BY (sent + recv) DESC
+                LIMIT 5
+                ",
+            )?;
+
+            let top_rows = top_stmt.query_map(params![start_ts, exclusive_end], |row| {
+                Ok(AppUsageRow {
+                    process_name: row.get(0)?,
+                    display_name: row.get(1)?,
+                    bytes_sent: row.get::<_, i64>(2)?.max(0) as u64,
+                    bytes_recv: row.get::<_, i64>(3)?.max(0) as u64,
+                    last_seen_ts: row.get::<_, i64>(4)?,
+                })
+            })?;
+
+            afk_windows.push(AfkWindowUsage {
+                start_ts,
+                end_ts,
+                duration_seconds,
+                bytes_sent,
+                bytes_recv,
+                top_apps: top_rows.collect::<std::result::Result<Vec<_>, _>>()?,
+            });
+        }
+
+        Ok(AfkAuditResponse { afk_windows })
+    }
+
+    pub fn upsert_afk_window(&self, start_ts: i64, end_ts: i64, source: &str) -> Result<()> {
+        if start_ts <= 0 || end_ts <= 0 || end_ts < start_ts {
+            return Ok(());
+        }
+
+        let normalized_source = if source.trim().is_empty() {
+            "wts"
+        } else {
+            source.trim()
+        };
+
+        let mut conn = self.open_connection()?;
+        let tx = conn.transaction()?;
+
+        let merge_floor = start_ts.saturating_sub(1);
+        let merge_ceiling = end_ts.saturating_add(1);
+        let mut stmt = tx.prepare(
+            "
+            SELECT id, start_ts, end_ts
+            FROM afk_windows
+            WHERE start_ts <= ?1
+              AND end_ts >= ?2
+            ORDER BY start_ts ASC
+            ",
+        )?;
+
+        let mut rows = stmt.query(params![merge_ceiling, merge_floor])?;
+        let mut overlapping = Vec::new();
+        while let Some(row) = rows.next()? {
+            overlapping.push((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ));
+        }
+        drop(rows);
+        drop(stmt);
+
+        if overlapping.is_empty() {
+            tx.execute(
+                "
+                INSERT INTO afk_windows(start_ts, end_ts, source)
+                VALUES(?1, ?2, ?3)
+                ",
+                params![start_ts, end_ts, normalized_source],
+            )?;
+            tx.commit()?;
+            return Ok(());
+        }
+
+        let mut merged_start = start_ts;
+        let mut merged_end = end_ts;
+        for (_, existing_start, existing_end) in &overlapping {
+            merged_start = merged_start.min(*existing_start);
+            merged_end = merged_end.max(*existing_end);
+        }
+
+        let keep_id = overlapping[0].0;
+        tx.execute(
+            "
+            UPDATE afk_windows
+            SET start_ts = ?1,
+                end_ts = ?2,
+                source = ?3
+            WHERE id = ?4
+            ",
+            params![merged_start, merged_end, normalized_source, keep_id],
+        )?;
+
+        for (id, _, _) in overlapping.into_iter().skip(1) {
+            tx.execute("DELETE FROM afk_windows WHERE id = ?1", params![id])?;
+        }
+
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn db_size_bytes(&self) -> u64 {
@@ -622,6 +1198,11 @@ impl Db {
         upsert_setting(&tx, "poll_interval_seconds", "60", 0)?;
         upsert_setting(&tx, "retention_days", "0", 0)?;
         upsert_setting(&tx, "afk_idle_threshold_seconds", "300", 0)?;
+        upsert_setting(&tx, "onboarding_completed", "0", 0)?;
+        upsert_setting(&tx, "export_default_granularity", "day", 0)?;
+        upsert_setting(&tx, "export_default_include_summary", "1", 0)?;
+        upsert_setting(&tx, "export_default_include_apps", "1", 0)?;
+        upsert_setting(&tx, "export_default_include_interfaces", "1", 0)?;
         upsert_setting(&tx, "import_status", "idle", 0)?;
         upsert_setting(&tx, "import_progress_pct", "0", 0)?;
         tx.commit()?;
@@ -629,8 +1210,255 @@ impl Db {
     }
 }
 
+fn normalize_granularity(granularity: &str) -> &str {
+    match granularity.trim().to_ascii_lowercase().as_str() {
+        "hour" => "hour",
+        "week" => "week",
+        "month" => "month",
+        _ => "day",
+    }
+}
+
+fn resolve_app_breakdown_order_by(sort_by: Option<&str>) -> &'static str {
+    match sort_by
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("name_asc") | Some("display_name_asc") => {
+            "display_name COLLATE NOCASE ASC, a.process_name COLLATE NOCASE ASC, (sent + recv) DESC, sent DESC, recv DESC"
+        }
+        Some("upload_desc") | Some("bytes_sent_desc") => {
+            "sent DESC, recv DESC, (sent + recv) DESC, display_name COLLATE NOCASE ASC, a.process_name COLLATE NOCASE ASC"
+        }
+        Some("download_desc") | Some("bytes_recv_desc") => {
+            "recv DESC, sent DESC, (sent + recv) DESC, display_name COLLATE NOCASE ASC, a.process_name COLLATE NOCASE ASC"
+        }
+        _ => {
+            "(sent + recv) DESC, sent DESC, recv DESC, display_name COLLATE NOCASE ASC, a.process_name COLLATE NOCASE ASC"
+        }
+    }
+}
+
+fn normalize_cap_alert_scope_filter(raw: Option<&str>) -> Option<String> {
+    match raw.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        Some(CAP_SCOPE_GLOBAL) => Some(CAP_SCOPE_GLOBAL.to_string()),
+        Some(CAP_SCOPE_INTERFACE) => Some(CAP_SCOPE_INTERFACE.to_string()),
+        _ => None,
+    }
+}
+
+fn normalize_cap_alert_window_filter(raw: Option<&str>) -> Option<String> {
+    match raw.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        Some(CAP_ALERT_WINDOW_MONTHLY) => Some(CAP_ALERT_WINDOW_MONTHLY.to_string()),
+        Some(CAP_ALERT_WINDOW_DAILY) => Some(CAP_ALERT_WINDOW_DAILY.to_string()),
+        _ => None,
+    }
+}
+
+fn normalize_cap_alert_threshold_filter(raw: Option<&str>) -> Option<String> {
+    match raw.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        Some("pct_50") | Some("pct_80") | Some("pct_95") | Some("daily_cap") => {
+            raw.map(str::trim).map(str::to_ascii_lowercase)
+        }
+        _ => None,
+    }
+}
+
+fn list_active_cap_definitions(conn: &Connection) -> Result<Vec<ActiveCapDefinition>> {
+    let mut stmt = conn.prepare(
+        "
+        SELECT id, scope, interface_guid, monthly_cap_bytes
+        FROM monthly_cap_definitions
+        WHERE is_active = 1
+          AND monthly_cap_bytes > 0
+        ORDER BY id ASC
+        ",
+    )?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok(ActiveCapDefinition {
+            id: row.get::<_, i64>(0)?,
+            scope: row.get::<_, String>(1)?,
+            interface_guid: row.get::<_, Option<String>>(2)?,
+            monthly_cap_bytes: row.get::<_, i64>(3)?.max(0) as u64,
+        })
+    })?;
+
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+fn query_cap_usage_bytes(
+    conn: &Connection,
+    start_ts: i64,
+    end_ts: i64,
+    interface_guid: Option<&str>,
+) -> Result<u64> {
+    let total = conn.query_row(
+        "
+        WITH poll_cutover AS (
+            SELECT MIN(candidate_ts) AS ts
+            FROM (
+                SELECT MIN(ts) AS candidate_ts
+                FROM usage_records
+                WHERE source IN ('interface_poll', 'poll')
+
+                UNION ALL
+
+                SELECT MIN(last_seen) AS candidate_ts
+                FROM interfaces
+                WHERE guid <> '{11111111-1111-1111-1111-111111111111}'
+            ) cutover_candidates
+            WHERE candidate_ts IS NOT NULL
+        )
+        SELECT
+            COALESCE(SUM(ur.bytes_sent), 0) + COALESCE(SUM(ur.bytes_recv), 0) AS total_bytes
+        FROM usage_records ur
+        JOIN interfaces i ON i.id = ur.interface_id
+        CROSS JOIN poll_cutover pc
+        WHERE ur.ts >= :start_ts
+          AND ur.ts < :end_ts
+          AND (:interface_guid IS NULL OR i.guid = :interface_guid)
+          AND (
+              ur.source IN ('interface_poll', 'poll')
+              OR (ur.source = 'import' AND (pc.ts IS NULL OR ur.ts < pc.ts))
+          )
+        ",
+        named_params! {
+            ":start_ts": start_ts,
+            ":end_ts": end_ts,
+            ":interface_guid": interface_guid,
+        },
+        |row| row.get::<_, i64>(0),
+    )?;
+
+    Ok(total.max(0) as u64)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_cap_alert_event(
+    conn: &Connection,
+    cap_definition_id: i64,
+    scope: &str,
+    interface_guid: Option<&str>,
+    window_kind: &str,
+    window_start_ts: i64,
+    window_end_ts: i64,
+    threshold_kind: &str,
+    threshold_value: u64,
+    usage_bytes: u64,
+    cap_bytes: u64,
+    fired_at: i64,
+) -> Result<bool> {
+    let inserted = conn.execute(
+        "
+        INSERT INTO cap_alert_events(
+            cap_definition_id,
+            scope,
+            interface_guid,
+            window_kind,
+            window_start_ts,
+            window_end_ts,
+            threshold_kind,
+            threshold_value,
+            usage_bytes,
+            cap_bytes,
+            fired_at,
+            delivery_state
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+        ON CONFLICT(
+            cap_definition_id,
+            window_kind,
+            window_start_ts,
+            threshold_kind,
+            threshold_value
+        )
+        DO NOTHING
+        ",
+        params![
+            cap_definition_id,
+            scope,
+            interface_guid,
+            window_kind,
+            window_start_ts,
+            window_end_ts,
+            threshold_kind,
+            as_i64_clamped(threshold_value),
+            as_i64_clamped(usage_bytes),
+            as_i64_clamped(cap_bytes),
+            fired_at,
+            CAP_ALERT_DELIVERY_NEW,
+        ],
+    )?;
+
+    Ok(inserted > 0)
+}
+
+fn utc_month_start_ts(conn: &Connection, now_ts: i64) -> Result<i64> {
+    conn.query_row(
+        "
+        SELECT COALESCE(
+            CAST(strftime('%s', datetime(?1, 'unixepoch', 'start of month')) AS INTEGER),
+            ?1
+        )
+        ",
+        params![now_ts],
+        |row| row.get::<_, i64>(0),
+    )
+    .map_err(Into::into)
+}
+
+fn utc_day_start_ts(now_ts: i64) -> i64 {
+    now_ts - now_ts.rem_euclid(24 * 3600)
+}
+
+fn threshold_bytes_for_percent(cap_bytes: u64, percent: u64) -> u64 {
+    if cap_bytes == 0 || percent == 0 {
+        return 0;
+    }
+
+    cap_bytes
+        .saturating_mul(percent)
+        .saturating_add(99)
+        .saturating_div(100)
+}
+
+fn derive_daily_cap_bytes(monthly_cap_bytes: u64) -> u64 {
+    if monthly_cap_bytes == 0 {
+        return 0;
+    }
+
+    monthly_cap_bytes.saturating_add(29).saturating_div(30)
+}
+
+fn as_i64_clamped(value: u64) -> i64 {
+    if value > i64::MAX as u64 {
+        i64::MAX
+    } else {
+        value as i64
+    }
+}
+
+fn normalize_cap_interface_guid(
+    scope: &str,
+    interface_guid: Option<&str>,
+) -> Result<Option<String>> {
+    match scope {
+        CAP_SCOPE_GLOBAL => Ok(None),
+        CAP_SCOPE_INTERFACE => {
+            let trimmed = interface_guid
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("interface scope requires interface_guid"))?;
+            Ok(Some(trimmed.to_string()))
+        }
+        _ => anyhow::bail!("invalid scope"),
+    }
+}
+
 fn granularity_to_seconds(granularity: &str) -> i64 {
-    match granularity {
+    match normalize_granularity(granularity) {
         "hour" => 3600,
         "week" => 7 * 24 * 3600,
         "month" => 30 * 24 * 3600,
@@ -765,6 +1593,34 @@ fn read_setting_u32(conn: &Connection, key: &str) -> Result<Option<u32>> {
     Ok(raw.and_then(|value| value.parse::<u32>().ok()))
 }
 
+fn read_setting_bool(conn: &Connection, key: &str) -> Result<Option<bool>> {
+    let raw = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1 LIMIT 1",
+            params![key],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+
+    Ok(
+        raw.and_then(|value| match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        }),
+    )
+}
+
+fn read_setting_string(conn: &Connection, key: &str) -> Result<Option<String>> {
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = ?1 LIMIT 1",
+        params![key],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
 const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS interfaces (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -842,6 +1698,48 @@ CREATE TABLE IF NOT EXISTS settings (
     value      TEXT NOT NULL,
     updated_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS monthly_cap_definitions (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope             TEXT NOT NULL,
+    interface_guid    TEXT,
+    monthly_cap_bytes INTEGER NOT NULL,
+    is_active         INTEGER NOT NULL DEFAULT 1,
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL,
+    CHECK(scope IN ('global', 'interface')),
+    CHECK(monthly_cap_bytes > 0),
+    CHECK((scope = 'global' AND interface_guid IS NULL) OR (scope = 'interface' AND interface_guid IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_monthly_caps_scope_interface
+    ON monthly_cap_definitions(scope, interface_guid);
+CREATE INDEX IF NOT EXISTS idx_monthly_caps_active
+    ON monthly_cap_definitions(is_active, scope);
+
+CREATE TABLE IF NOT EXISTS cap_alert_events (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    cap_definition_id INTEGER NOT NULL REFERENCES monthly_cap_definitions(id) ON DELETE CASCADE,
+    scope             TEXT NOT NULL,
+    interface_guid    TEXT,
+    window_kind       TEXT NOT NULL,
+    window_start_ts   INTEGER NOT NULL,
+    window_end_ts     INTEGER NOT NULL,
+    threshold_kind    TEXT NOT NULL,
+    threshold_value   INTEGER NOT NULL,
+    usage_bytes       INTEGER NOT NULL,
+    cap_bytes         INTEGER NOT NULL,
+    fired_at          INTEGER NOT NULL,
+    delivery_state    TEXT NOT NULL DEFAULT 'new',
+    delivered_at      INTEGER,
+    CHECK(window_kind IN ('monthly', 'daily')),
+    CHECK(threshold_kind IN ('pct_50', 'pct_80', 'pct_95', 'daily_cap'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cap_alert_events_unique
+    ON cap_alert_events(cap_definition_id, window_kind, window_start_ts, threshold_kind, threshold_value);
+CREATE INDEX IF NOT EXISTS idx_cap_alert_events_fired_at
+    ON cap_alert_events(fired_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cap_alert_events_delivery
+    ON cap_alert_events(delivery_state, fired_at DESC);
 
 CREATE TABLE IF NOT EXISTS import_log (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -986,6 +1884,137 @@ mod tests {
     }
 
     #[test]
+    fn app_breakdown_respects_sort_modes_and_stable_tiebreakers() {
+        let db = new_test_db();
+        let ts = 200;
+
+        insert_usage(
+            &db,
+            ts,
+            "zeta.exe",
+            TEST_ATTRIBUTION_GUID,
+            "Attributed Usage",
+            0,
+            50,
+            50,
+            "helper",
+        );
+        insert_usage(
+            &db,
+            ts,
+            "alpha.exe",
+            TEST_ATTRIBUTION_GUID,
+            "Attributed Usage",
+            0,
+            50,
+            50,
+            "helper",
+        );
+        insert_usage(
+            &db,
+            ts,
+            "beta.exe",
+            TEST_ATTRIBUTION_GUID,
+            "Attributed Usage",
+            0,
+            70,
+            30,
+            "helper",
+        );
+        insert_usage(
+            &db,
+            ts,
+            "gamma.exe",
+            TEST_ATTRIBUTION_GUID,
+            "Attributed Usage",
+            0,
+            30,
+            70,
+            "helper",
+        );
+
+        let total = db
+            .query_app_breakdown(&AppBreakdownRequest {
+                start_ts: 0,
+                end_ts: 1000,
+                interface_id: None,
+                interface_type: None,
+                limit: Some(10),
+                sort_by: Some("total_bytes_desc".to_string()),
+            })
+            .expect("query app breakdown total");
+        let total_names = total
+            .apps
+            .iter()
+            .map(|row| row.process_name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            total_names,
+            vec!["beta.exe", "alpha.exe", "zeta.exe", "gamma.exe"]
+        );
+
+        let upload = db
+            .query_app_breakdown(&AppBreakdownRequest {
+                start_ts: 0,
+                end_ts: 1000,
+                interface_id: None,
+                interface_type: None,
+                limit: Some(10),
+                sort_by: Some("bytes_sent_desc".to_string()),
+            })
+            .expect("query app breakdown upload");
+        let upload_names = upload
+            .apps
+            .iter()
+            .map(|row| row.process_name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            upload_names,
+            vec!["beta.exe", "alpha.exe", "zeta.exe", "gamma.exe"]
+        );
+
+        let download = db
+            .query_app_breakdown(&AppBreakdownRequest {
+                start_ts: 0,
+                end_ts: 1000,
+                interface_id: None,
+                interface_type: None,
+                limit: Some(10),
+                sort_by: Some("bytes_recv_desc".to_string()),
+            })
+            .expect("query app breakdown download");
+        let download_names = download
+            .apps
+            .iter()
+            .map(|row| row.process_name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            download_names,
+            vec!["gamma.exe", "alpha.exe", "zeta.exe", "beta.exe"]
+        );
+
+        let by_name = db
+            .query_app_breakdown(&AppBreakdownRequest {
+                start_ts: 0,
+                end_ts: 1000,
+                interface_id: None,
+                interface_type: None,
+                limit: Some(10),
+                sort_by: Some("display_name_asc".to_string()),
+            })
+            .expect("query app breakdown name");
+        let by_name_names = by_name
+            .apps
+            .iter()
+            .map(|row| row.process_name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            by_name_names,
+            vec!["alpha.exe", "beta.exe", "gamma.exe", "zeta.exe"]
+        );
+    }
+
+    #[test]
     fn usage_summary_with_app_filter_prefers_helper_after_cutover() {
         let db = new_test_db();
         let app = "sm_summary_case.exe";
@@ -1090,5 +2119,416 @@ mod tests {
 
         assert_eq!(response.total_sent, 80);
         assert_eq!(response.total_recv, 20);
+    }
+
+    #[test]
+    fn upsert_and_list_cap_definitions_support_global_and_interface_scopes() {
+        let db = new_test_db();
+        let ts = 1_700_000_000;
+
+        db.upsert_cap_definition(
+            ts,
+            &UpsertCapDefinitionRequest {
+                id: None,
+                scope: "global".to_string(),
+                interface_guid: None,
+                monthly_cap_bytes: 100 * 1024 * 1024,
+                is_active: true,
+            },
+        )
+        .expect("upsert global cap");
+
+        db.upsert_cap_definition(
+            ts,
+            &UpsertCapDefinitionRequest {
+                id: None,
+                scope: "interface".to_string(),
+                interface_guid: Some(TEST_ETHERNET_GUID.to_string()),
+                monthly_cap_bytes: 200 * 1024 * 1024,
+                is_active: false,
+            },
+        )
+        .expect("upsert interface cap");
+
+        let caps = db.list_cap_definitions().expect("list caps").caps;
+        assert_eq!(caps.len(), 2);
+        assert!(
+            caps.iter()
+                .any(|cap| cap.scope == "global" && cap.interface_guid.is_none())
+        );
+        assert!(caps.iter().any(|cap| {
+            cap.scope == "interface"
+                && cap.interface_guid.as_deref() == Some(TEST_ETHERNET_GUID)
+                && !cap.is_active
+        }));
+    }
+
+    #[test]
+    fn delete_cap_definition_reports_deleted_row() {
+        let db = new_test_db();
+        let created = db
+            .upsert_cap_definition(
+                1_700_000_000,
+                &UpsertCapDefinitionRequest {
+                    id: None,
+                    scope: "global".to_string(),
+                    interface_guid: None,
+                    monthly_cap_bytes: 300 * 1024 * 1024,
+                    is_active: true,
+                },
+            )
+            .expect("create cap")
+            .cap;
+
+        let deleted = db
+            .delete_cap_definition(&DeleteCapDefinitionRequest { id: created.id })
+            .expect("delete cap");
+        assert!(deleted.deleted);
+        assert!(
+            db.list_cap_definitions()
+                .expect("list caps")
+                .caps
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn evaluate_cap_alerts_inserts_thresholds_once_per_window() {
+        let db = new_test_db();
+        let now_ts = 1_700_000_000;
+        db.upsert_cap_definition(
+            now_ts,
+            &UpsertCapDefinitionRequest {
+                id: None,
+                scope: "global".to_string(),
+                interface_guid: None,
+                monthly_cap_bytes: 1000,
+                is_active: true,
+            },
+        )
+        .expect("create global cap");
+
+        insert_usage(
+            &db,
+            now_ts - 60,
+            "cap-threshold-app.exe",
+            TEST_ETHERNET_GUID,
+            "Ethernet",
+            6,
+            400,
+            200,
+            "interface_poll",
+        );
+
+        let inserted_first = db
+            .evaluate_cap_alerts(now_ts)
+            .expect("evaluate alerts first");
+        assert_eq!(inserted_first, 2);
+
+        let inserted_second = db
+            .evaluate_cap_alerts(now_ts + 30)
+            .expect("evaluate alerts second");
+        assert_eq!(inserted_second, 0);
+
+        let conn = db.open_connection().expect("open db");
+        let count = conn
+            .query_row("SELECT COUNT(*) FROM cap_alert_events", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count cap alerts");
+        assert_eq!(count, 2);
+
+        let mut kinds_stmt = conn
+            .prepare("SELECT threshold_kind FROM cap_alert_events ORDER BY threshold_kind")
+            .expect("prepare kinds query");
+        let kinds = kinds_stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query kinds")
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .expect("collect kinds");
+        assert_eq!(kinds, vec!["daily_cap".to_string(), "pct_50".to_string()]);
+    }
+
+    #[test]
+    fn evaluate_cap_alerts_progressively_fires_higher_monthly_thresholds() {
+        let db = new_test_db();
+        let now_ts = 1_700_000_000;
+        db.upsert_cap_definition(
+            now_ts,
+            &UpsertCapDefinitionRequest {
+                id: None,
+                scope: "global".to_string(),
+                interface_guid: None,
+                monthly_cap_bytes: 1000,
+                is_active: true,
+            },
+        )
+        .expect("create global cap");
+
+        insert_usage(
+            &db,
+            now_ts - 120,
+            "cap-progress-app.exe",
+            TEST_ETHERNET_GUID,
+            "Ethernet",
+            6,
+            500,
+            100,
+            "interface_poll",
+        );
+        assert_eq!(
+            db.evaluate_cap_alerts(now_ts)
+                .expect("evaluate initial thresholds"),
+            2
+        );
+
+        insert_usage(
+            &db,
+            now_ts - 30,
+            "cap-progress-app.exe",
+            TEST_ETHERNET_GUID,
+            "Ethernet",
+            6,
+            200,
+            100,
+            "interface_poll",
+        );
+        assert_eq!(
+            db.evaluate_cap_alerts(now_ts + 30)
+                .expect("evaluate 80 threshold"),
+            1
+        );
+
+        insert_usage(
+            &db,
+            now_ts + 15,
+            "cap-progress-app.exe",
+            TEST_ETHERNET_GUID,
+            "Ethernet",
+            6,
+            60,
+            0,
+            "interface_poll",
+        );
+        assert_eq!(
+            db.evaluate_cap_alerts(now_ts + 60)
+                .expect("evaluate 95 threshold"),
+            1
+        );
+
+        let conn = db.open_connection().expect("open db");
+        let pct_80_count = conn
+            .query_row(
+                "SELECT COUNT(*) FROM cap_alert_events WHERE threshold_kind = 'pct_80'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count pct_80");
+        let pct_95_count = conn
+            .query_row(
+                "SELECT COUNT(*) FROM cap_alert_events WHERE threshold_kind = 'pct_95'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count pct_95");
+        let total_count = conn
+            .query_row("SELECT COUNT(*) FROM cap_alert_events", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count total alerts");
+
+        assert_eq!(pct_80_count, 1);
+        assert_eq!(pct_95_count, 1);
+        assert_eq!(total_count, 4);
+    }
+
+    #[test]
+    fn list_cap_alert_events_orders_desc_and_respects_limit() {
+        let db = new_test_db();
+        let now_ts = 1_700_000_000;
+        db.upsert_cap_definition(
+            now_ts,
+            &UpsertCapDefinitionRequest {
+                id: None,
+                scope: "global".to_string(),
+                interface_guid: None,
+                monthly_cap_bytes: 1000,
+                is_active: true,
+            },
+        )
+        .expect("create global cap");
+
+        insert_usage(
+            &db,
+            now_ts - 120,
+            "history-order-app.exe",
+            TEST_ETHERNET_GUID,
+            "Ethernet",
+            6,
+            500,
+            100,
+            "interface_poll",
+        );
+        db.evaluate_cap_alerts(now_ts)
+            .expect("evaluate first thresholds");
+
+        insert_usage(
+            &db,
+            now_ts - 10,
+            "history-order-app.exe",
+            TEST_ETHERNET_GUID,
+            "Ethernet",
+            6,
+            200,
+            100,
+            "interface_poll",
+        );
+        db.evaluate_cap_alerts(now_ts + 60)
+            .expect("evaluate second thresholds");
+
+        let response = db
+            .list_cap_alert_events(&ListCapAlertEventsRequest {
+                start_ts: None,
+                end_ts: None,
+                scope: None,
+                interface_guid: None,
+                window_kind: None,
+                threshold_kind: None,
+                limit: Some(2),
+            })
+            .expect("list cap alerts");
+
+        assert_eq!(response.events.len(), 2);
+        assert!(response.events[0].fired_at >= response.events[1].fired_at);
+        assert_eq!(response.events[0].threshold_kind, "pct_80");
+    }
+
+    #[test]
+    fn list_cap_alert_events_filters_by_scope_and_threshold_kind() {
+        let db = new_test_db();
+        let now_ts = 1_700_000_000;
+        db.upsert_cap_definition(
+            now_ts,
+            &UpsertCapDefinitionRequest {
+                id: None,
+                scope: "global".to_string(),
+                interface_guid: None,
+                monthly_cap_bytes: 1000,
+                is_active: true,
+            },
+        )
+        .expect("create global cap");
+        db.upsert_cap_definition(
+            now_ts,
+            &UpsertCapDefinitionRequest {
+                id: None,
+                scope: "interface".to_string(),
+                interface_guid: Some(TEST_ETHERNET_GUID.to_string()),
+                monthly_cap_bytes: 1000,
+                is_active: true,
+            },
+        )
+        .expect("create interface cap");
+
+        insert_usage(
+            &db,
+            now_ts - 60,
+            "history-filter-app.exe",
+            TEST_ETHERNET_GUID,
+            "Ethernet",
+            6,
+            500,
+            100,
+            "interface_poll",
+        );
+        db.evaluate_cap_alerts(now_ts).expect("evaluate thresholds");
+
+        let response = db
+            .list_cap_alert_events(&ListCapAlertEventsRequest {
+                start_ts: None,
+                end_ts: None,
+                scope: Some("interface".to_string()),
+                interface_guid: Some(TEST_ETHERNET_GUID.to_string()),
+                window_kind: None,
+                threshold_kind: Some("pct_50".to_string()),
+                limit: Some(10),
+            })
+            .expect("list filtered alerts");
+
+        assert_eq!(response.events.len(), 1);
+        let event = &response.events[0];
+        assert_eq!(event.scope, "interface");
+        assert_eq!(event.interface_guid.as_deref(), Some(TEST_ETHERNET_GUID));
+        assert_eq!(event.threshold_kind, "pct_50");
+    }
+
+    #[test]
+    fn upsert_afk_window_merges_contiguous_ranges() {
+        let db = new_test_db();
+
+        db.upsert_afk_window(100, 130, "last_input")
+            .expect("insert first afk window");
+        db.upsert_afk_window(131, 170, "last_input")
+            .expect("merge contiguous afk window");
+
+        let conn = db.open_connection().expect("open db");
+        let count = conn
+            .query_row("SELECT COUNT(*) FROM afk_windows", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count afk windows");
+        assert_eq!(count, 1);
+
+        let merged = conn
+            .query_row(
+                "SELECT start_ts, end_ts FROM afk_windows LIMIT 1",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .expect("read merged afk window");
+        assert_eq!(merged, (100, 170));
+    }
+
+    #[test]
+    fn afk_audit_includes_duration_totals_and_top_apps() {
+        let db = new_test_db();
+        let afk_start = 1_000;
+        let afk_end = 1_060;
+
+        db.upsert_afk_window(afk_start, afk_end, "last_input")
+            .expect("insert afk window");
+        insert_usage(
+            &db,
+            1_010,
+            "sm_afk_a.exe",
+            TEST_ATTRIBUTION_GUID,
+            "Attributed Usage",
+            0,
+            100,
+            40,
+            "import",
+        );
+        insert_usage(
+            &db,
+            1_040,
+            "sm_afk_b.exe",
+            TEST_ATTRIBUTION_GUID,
+            "Attributed Usage",
+            0,
+            200,
+            60,
+            "helper",
+        );
+
+        let response = db.query_afk_audit().expect("query afk audit");
+        assert_eq!(response.afk_windows.len(), 1);
+
+        let window = &response.afk_windows[0];
+        assert_eq!(window.start_ts, afk_start);
+        assert_eq!(window.end_ts, afk_end);
+        assert_eq!(window.duration_seconds, 60);
+        assert_eq!(window.bytes_sent, 300);
+        assert_eq!(window.bytes_recv, 100);
+        assert_eq!(window.top_apps.len(), 2);
     }
 }

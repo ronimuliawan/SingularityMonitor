@@ -45,6 +45,18 @@ function Invoke-PipeRequest {
     }
 }
 
+function Assert-SettingEquals {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)]$Expected,
+        [Parameter(Mandatory = $true)]$Actual
+    )
+
+    if ($Actual -ne $Expected) {
+        throw "GET_SETTINGS mismatch for ${Name}: expected '$Expected', got '$Actual'"
+    }
+}
+
 Write-Host "Building release Rust artifacts..."
 & (Join-Path $PSScriptRoot "build-rust.cmd") --release
 
@@ -62,11 +74,18 @@ try {
     $beforeStatus = Invoke-PipeRequest -Method "GET_DAEMON_STATUS" -Payload @{}
     Write-Host "Initial poll interval: $($beforeStatus.poll_interval_seconds)s"
 
-    $null = Invoke-PipeRequest -Method "SET_SETTINGS" -Payload @{
+    $targetSettings = @{
         poll_interval_seconds = $TargetPollSeconds
         retention_days = 7
         afk_idle_threshold_seconds = 420
+        onboarding_completed = $true
+        export_default_granularity = "week"
+        export_default_include_summary = $false
+        export_default_include_apps = $false
+        export_default_include_interfaces = $false
     }
+
+    $null = Invoke-PipeRequest -Method "SET_SETTINGS" -Payload $targetSettings
 
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $updated = $false
@@ -84,15 +103,21 @@ try {
     }
 
     $settings = Invoke-PipeRequest -Method "GET_SETTINGS" -Payload @{}
-    if ([int]$settings.poll_interval_seconds -ne $TargetPollSeconds) {
-        throw "GET_SETTINGS mismatch for poll interval: $($settings.poll_interval_seconds)"
+    Assert-SettingEquals -Name "poll_interval_seconds" -Expected $TargetPollSeconds -Actual ([int]$settings.poll_interval_seconds)
+    Assert-SettingEquals -Name "retention_days" -Expected 7 -Actual ([int]$settings.retention_days)
+    Assert-SettingEquals -Name "afk_idle_threshold_seconds" -Expected 420 -Actual ([int]$settings.afk_idle_threshold_seconds)
+    Assert-SettingEquals -Name "onboarding_completed" -Expected $true -Actual ([bool]$settings.onboarding_completed)
+    Assert-SettingEquals -Name "export_default_granularity" -Expected "week" -Actual ([string]$settings.export_default_granularity)
+    Assert-SettingEquals -Name "export_default_include_summary" -Expected $false -Actual ([bool]$settings.export_default_include_summary)
+    Assert-SettingEquals -Name "export_default_include_apps" -Expected $false -Actual ([bool]$settings.export_default_include_apps)
+    Assert-SettingEquals -Name "export_default_include_interfaces" -Expected $false -Actual ([bool]$settings.export_default_include_interfaces)
+
+    $null = Invoke-PipeRequest -Method "SET_SETTINGS" -Payload @{
+        export_default_granularity = "bad-value"
     }
-    if ([int]$settings.retention_days -ne 7) {
-        throw "GET_SETTINGS mismatch for retention_days: $($settings.retention_days)"
-    }
-    if ([int]$settings.afk_idle_threshold_seconds -ne 420) {
-        throw "GET_SETTINGS mismatch for afk threshold: $($settings.afk_idle_threshold_seconds)"
-    }
+
+    $normalizedSettings = Invoke-PipeRequest -Method "GET_SETTINGS" -Payload @{}
+    Assert-SettingEquals -Name "export_default_granularity (normalized)" -Expected "day" -Actual ([string]$normalizedSettings.export_default_granularity)
 
     Write-Host "M4 settings hot-reload smoke test passed."
 }

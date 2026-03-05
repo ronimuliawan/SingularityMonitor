@@ -171,4 +171,43 @@ mod tests {
         assert_eq!(deltas[0].bytes_sent, 100);
         assert_eq!(deltas[0].bytes_recv, 120);
     }
+
+    #[test]
+    fn large_forward_anomaly_is_suppressed_then_normal_growth_resumes() {
+        let mut engine = DeltaEngine::new(1_000);
+        engine.compute(&[snapshot("{if0}", 100, 100)], 1000, 60, 60);
+
+        let anomalous = engine.compute(&[snapshot("{if0}", 5_100, 5_200)], 1060, 60, 60);
+        assert!(anomalous.is_empty());
+
+        let recovered = engine.compute(&[snapshot("{if0}", 5_220, 5_350)], 1120, 60, 60);
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].bytes_sent, 120);
+        assert_eq!(recovered[0].bytes_recv, 150);
+    }
+
+    #[test]
+    fn large_regression_is_suppressed_then_growth_from_new_baseline_is_emitted() {
+        let mut engine = DeltaEngine::new(1_000);
+        engine.compute(&[snapshot("{if0}", 8_000, 9_000)], 1000, 60, 60);
+
+        let anomalous = engine.compute(&[snapshot("{if0}", 3_000, 3_500)], 1060, 60, 60);
+        assert!(anomalous.is_empty());
+
+        let recovered = engine.compute(&[snapshot("{if0}", 3_600, 3_900)], 1120, 60, 60);
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].bytes_sent, 600);
+        assert_eq!(recovered[0].bytes_recv, 400);
+    }
+
+    #[test]
+    fn one_counter_regresses_and_other_grows_only_growth_counter_is_counted() {
+        let mut engine = DeltaEngine::new(1_000);
+        engine.compute(&[snapshot("{if0}", 3_000, 4_000)], 1000, 60, 60);
+
+        let deltas = engine.compute(&[snapshot("{if0}", 2_000, 4_700)], 1060, 60, 60);
+        assert_eq!(deltas.len(), 1);
+        assert_eq!(deltas[0].bytes_sent, 0);
+        assert_eq!(deltas[0].bytes_recv, 700);
+    }
 }
