@@ -22,6 +22,7 @@ namespace SingularityMonitor.Viewer.Views
         private const bool DefaultExportIncludeSummary = true;
         private const bool DefaultExportIncludeApps = true;
         private const bool DefaultExportIncludeInterfaces = true;
+        private const bool DefaultExportIncludeAfk = true;
         private const string OverviewModeCalendar = "calendar";
         private const string OverviewModeSelectedRange = "selected_range";
         private const string RangePresetToday = "today";
@@ -41,6 +42,8 @@ namespace SingularityMonitor.Viewer.Views
         private string selectedCapScope = CapScopeGlobal;
         private long? selectedCapDefinitionId;
         private List<Services.InterfaceInfo> latestInterfaces = new();
+        private List<Services.AfkWindowUsage> latestAfkWindows = new();
+        private bool afkOnlyFilterEnabled;
         private bool pageReady;
         private bool onboardingCompleted;
         private bool onboardingStateLoaded;
@@ -80,6 +83,7 @@ namespace SingularityMonitor.Viewer.Views
             await LoadSettingsAsync();
             await RefreshStatusAsync();
             await RefreshOverviewAsync();
+            await RefreshAfkTimelineAsync();
             await RefreshAppsAsync();
             await RefreshSelectedAppDetailAsync();
             await RefreshInterfaceBreakdownAsync();
@@ -105,6 +109,7 @@ namespace SingularityMonitor.Viewer.Views
             IncludeSummaryCheckBox.IsChecked = DefaultExportIncludeSummary;
             IncludeAppsCheckBox.IsChecked = DefaultExportIncludeApps;
             IncludeInterfacesCheckBox.IsChecked = DefaultExportIncludeInterfaces;
+            IncludeAfkCheckBox.IsChecked = DefaultExportIncludeAfk;
         }
 
         private void InitializeTopAppsControls()
@@ -250,6 +255,7 @@ namespace SingularityMonitor.Viewer.Views
             await RefreshStatusAsync();
             await LoadSettingsAsync();
             await RefreshOverviewAsync();
+            await RefreshAfkTimelineAsync();
             await RefreshAppsAsync();
             await RefreshSelectedAppDetailAsync();
             await RefreshInterfaceBreakdownAsync();
@@ -298,6 +304,35 @@ namespace SingularityMonitor.Viewer.Views
             catch (Exception ex)
             {
                 SettingsStatusText.Text = $"Failed to reset settings: {ex.Message}";
+            }
+        }
+
+        private async void OnCompactDatabaseClicked(object sender, RoutedEventArgs e)
+        {
+            var triggerButton = sender as Button;
+            if (triggerButton is not null)
+            {
+                triggerButton.IsEnabled = false;
+            }
+
+            try
+            {
+                var result = await daemonClient.CompactDatabaseAsync();
+                SettingsStatusText.Text =
+                    $"Compacted DB in {result.DurationMs}ms. Reclaimed {FormatBytes(result.ReclaimedBytes)} " +
+                    $"({FormatBytes(result.BeforeBytes)} -> {FormatBytes(result.AfterBytes)}).";
+                await RefreshStatusAsync();
+            }
+            catch (Exception ex)
+            {
+                SettingsStatusText.Text = $"Failed to compact database: {ex.Message}";
+            }
+            finally
+            {
+                if (triggerButton is not null)
+                {
+                    triggerButton.IsEnabled = true;
+                }
             }
         }
 
@@ -383,6 +418,33 @@ namespace SingularityMonitor.Viewer.Views
         private async void OnRefreshInterfaceBreakdownClicked(object sender, RoutedEventArgs e)
         {
             await RefreshInterfaceBreakdownAsync();
+        }
+
+        private async void OnRefreshAfkTimelineClicked(object sender, RoutedEventArgs e)
+        {
+            await RefreshAfkTimelineAsync();
+            if (afkOnlyFilterEnabled)
+            {
+                await RefreshAppsAsync();
+                await RefreshSelectedAppDetailAsync();
+            }
+        }
+
+        private void OnAfkTimelineSelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            RefreshSelectedAfkWindowApps();
+        }
+
+        private async void OnAfkOnlyFilterChanged(object sender, RoutedEventArgs e)
+        {
+            if (!pageReady)
+            {
+                return;
+            }
+
+            afkOnlyFilterEnabled = AfkOnlyTopAppsCheckBox.IsChecked == true;
+            await RefreshAppsAsync();
+            await RefreshSelectedAppDetailAsync();
         }
 
         private async void OnRefreshAlertsHistoryClicked(object sender, RoutedEventArgs e)
@@ -497,6 +559,7 @@ namespace SingularityMonitor.Viewer.Views
         private async void OnApplyRangeClicked(object sender, RoutedEventArgs e)
         {
             await RefreshOverviewAsync();
+            await RefreshAfkTimelineAsync();
             await RefreshAppsAsync();
             await RefreshSelectedAppDetailAsync();
             await RefreshInterfaceBreakdownAsync();
@@ -536,6 +599,7 @@ namespace SingularityMonitor.Viewer.Views
             }
 
             await RefreshOverviewAsync();
+            await RefreshAfkTimelineAsync();
             await RefreshAppsAsync();
             await RefreshSelectedAppDetailAsync();
             await RefreshInterfaceBreakdownAsync();
@@ -624,12 +688,13 @@ namespace SingularityMonitor.Viewer.Views
                 var includeSummary = IncludeSummaryCheckBox.IsChecked == true;
                 var includeApps = IncludeAppsCheckBox.IsChecked == true;
                 var includeInterfaces = IncludeInterfacesCheckBox.IsChecked == true;
+                var includeAfk = IncludeAfkCheckBox.IsChecked == true;
                 var appScope = ResolveSelectedExportAppScope();
                 var selectedProcess = appScope == "selected" ? ResolveSelectedConcreteTopAppProcess() : null;
 
-                if (!includeSummary && !includeApps && !includeInterfaces)
+                if (!includeSummary && !includeApps && !includeInterfaces && !includeAfk)
                 {
-                    HelperStatusText.Text = "Select at least one export section (summary/apps/interfaces).";
+                    HelperStatusText.Text = "Select at least one export section (summary/apps/interfaces/afk).";
                     return;
                 }
 
@@ -641,15 +706,18 @@ namespace SingularityMonitor.Viewer.Views
                 }
 
                 var (startUtc, endUtc) = ResolveTopAppsRangeUtc();
+                var startTs = startUtc.ToUnixTimeSeconds();
+                var endTs = endUtc.ToUnixTimeSeconds();
                 Services.UsageSummary? summary = null;
                 Services.AppBreakdown? appBreakdown = null;
                 Services.InterfaceBreakdownResponse? interfaceBreakdown = null;
+                Services.AfkWindowUsage[] afkWindows = Array.Empty<Services.AfkWindowUsage>();
 
                 if (includeSummary)
                 {
                     summary = await daemonClient.GetUsageSummaryAsync(
-                        startUtc.ToUnixTimeSeconds(),
-                        endUtc.ToUnixTimeSeconds(),
+                        startTs,
+                        endTs,
                         granularity: granularity,
                         interfaceId: interfaceId,
                         interfaceType: interfaceType,
@@ -659,8 +727,8 @@ namespace SingularityMonitor.Viewer.Views
                 if (includeApps)
                 {
                     appBreakdown = await daemonClient.GetAppBreakdownAsync(
-                        startUtc.ToUnixTimeSeconds(),
-                        endUtc.ToUnixTimeSeconds(),
+                        startTs,
+                        endTs,
                         limit: 500,
                         interfaceId: interfaceId,
                         interfaceType: interfaceType);
@@ -676,10 +744,19 @@ namespace SingularityMonitor.Viewer.Views
                 if (includeInterfaces)
                 {
                     interfaceBreakdown = await daemonClient.GetInterfaceBreakdownAsync(
-                        startUtc.ToUnixTimeSeconds(),
-                        endUtc.ToUnixTimeSeconds(),
+                        startTs,
+                        endTs,
                         interfaceId: interfaceId,
                         interfaceType: interfaceType);
+                }
+
+                if (includeAfk)
+                {
+                    var afkAudit = await daemonClient.GetAfkAuditAsync(
+                        startTs: startTs,
+                        endTs: endTs,
+                        limit: 1000);
+                    afkWindows = BuildExportAfkWindows(afkAudit.AfkWindows, startTs, endTs, selectedProcess);
                 }
 
                 var downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
@@ -688,12 +765,12 @@ namespace SingularityMonitor.Viewer.Views
 
                 if (asJson)
                 {
-                    var path = Path.Combine(downloads, $"singularity_export_{stamp}.json");
+                    var path = CreateUniqueExportPath(downloads, $"singularity_export_{stamp}", ".json");
                     var payload = new
                     {
                         generated_at_utc = DateTimeOffset.UtcNow,
-                        start_ts = startUtc.ToUnixTimeSeconds(),
-                        end_ts = endUtc.ToUnixTimeSeconds(),
+                        start_ts = startTs,
+                        end_ts = endTs,
                         granularity,
                         interface_id = interfaceId,
                         interface_type = interfaceType,
@@ -703,6 +780,7 @@ namespace SingularityMonitor.Viewer.Views
                         summary,
                         apps = appBreakdown?.Apps,
                         interfaces = interfaceBreakdown?.Interfaces,
+                        afk_windows = afkWindows,
                     };
                     var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
                     await File.WriteAllTextAsync(path, json);
@@ -710,10 +788,10 @@ namespace SingularityMonitor.Viewer.Views
                 }
                 else
                 {
-                    var path = Path.Combine(downloads, $"singularity_export_{stamp}.csv");
+                    var path = CreateUniqueExportPath(downloads, $"singularity_export_{stamp}", ".csv");
                     var csv = BuildCsvExport(
-                        startUtc.ToUnixTimeSeconds(),
-                        endUtc.ToUnixTimeSeconds(),
+                        startTs,
+                        endTs,
                         interfaceId,
                         interfaceType,
                         granularity,
@@ -721,7 +799,8 @@ namespace SingularityMonitor.Viewer.Views
                         selectedProcess,
                         summary,
                         appBreakdown,
-                        interfaceBreakdown);
+                        interfaceBreakdown,
+                        afkWindows);
                     await File.WriteAllTextAsync(path, csv);
                     HelperStatusText.Text = $"Exported CSV to {path}";
                 }
@@ -742,7 +821,8 @@ namespace SingularityMonitor.Viewer.Views
             string? appFilterProcess,
             Services.UsageSummary? summary,
             Services.AppBreakdown? appBreakdown,
-            Services.InterfaceBreakdownResponse? interfaceBreakdown)
+            Services.InterfaceBreakdownResponse? interfaceBreakdown,
+            IReadOnlyCollection<Services.AfkWindowUsage>? afkWindows)
         {
             var sb = new StringBuilder();
             sb.AppendLine("meta_key,meta_value");
@@ -811,6 +891,43 @@ namespace SingularityMonitor.Viewer.Views
                 }
             }
 
+            if (afkWindows is not null && afkWindows.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("section,window_start_ts,window_end_ts,duration_seconds,bytes_sent,bytes_recv,total_bytes,process_name,display_name,last_seen_ts");
+                foreach (var window in afkWindows)
+                {
+                    var windowTotal = window.BytesSent + window.BytesRecv;
+                    sb.AppendLine(string.Join(",",
+                        "afk_window",
+                        window.StartTs,
+                        window.EndTs,
+                        window.DurationSeconds,
+                        window.BytesSent,
+                        window.BytesRecv,
+                        windowTotal,
+                        "",
+                        "",
+                        ""));
+
+                    foreach (var app in window.TopApps)
+                    {
+                        var appTotal = app.BytesSent + app.BytesRecv;
+                        sb.AppendLine(string.Join(",",
+                            "afk_top_app",
+                            window.StartTs,
+                            window.EndTs,
+                            window.DurationSeconds,
+                            app.BytesSent,
+                            app.BytesRecv,
+                            appTotal,
+                            EscapeCsv(app.ProcessName),
+                            EscapeCsv(app.DisplayName),
+                            app.LastSeenTs));
+                    }
+                }
+            }
+
             return sb.ToString();
         }
 
@@ -856,6 +973,7 @@ namespace SingularityMonitor.Viewer.Views
                     $"Daemon v{status.Version} | Uptime {status.UptimeSeconds}s | " +
                     $"Poll {status.PollIntervalSeconds}s | Last poll {status.LastPollTs} | " +
                     $"Import {status.ImportStatus} {status.ImportProgressPct}%";
+                DbSizeStatusText.Text = $"Database size: {FormatBytes(status.DbSizeBytes)}.";
 
                 isImportRunning = status.ImportStatus.Equals("running", StringComparison.OrdinalIgnoreCase);
                 UpdateOnboardingCard();
@@ -885,6 +1003,9 @@ namespace SingularityMonitor.Viewer.Views
                 {
                     MemoryHintText.Text = memoryText + " (over ceiling, needs optimization).";
                 }
+
+                ReliabilityStatusText.Text = BuildReliabilityStatusText(status);
+                RetentionCleanupStatusText.Text = BuildRetentionCleanupStatusText(status);
             }
             catch (Exception ex)
             {
@@ -893,6 +1014,9 @@ namespace SingularityMonitor.Viewer.Views
                 StatusText.Text = "Daemon unavailable. Start the collector service or run daemon --console.";
                 HelperStatusText.Text = "Helper status unavailable while daemon is offline.";
                 MemoryHintText.Text = $"Status check failed: {ex.Message}";
+                DbSizeStatusText.Text = "Database size unavailable.";
+                ReliabilityStatusText.Text = "Reliability metrics unavailable.";
+                RetentionCleanupStatusText.Text = "Retention cleanup status unavailable.";
             }
         }
 
@@ -922,9 +1046,11 @@ namespace SingularityMonitor.Viewer.Views
                 await LoadInterfaceOptionsAsync();
                 await RefreshStatusAsync();
                 await RefreshOverviewAsync();
+                await RefreshAfkTimelineAsync();
                 await RefreshAppsAsync();
                 await RefreshSelectedAppDetailAsync();
                 await RefreshInterfaceBreakdownAsync();
+                await RefreshAlertsHistoryAsync();
 
                 if (markOnboardingCompleteOnSuccess)
                 {
@@ -1148,13 +1274,27 @@ namespace SingularityMonitor.Viewer.Views
                     interfaceType: interfaceType,
                     sortBy: MapTopAppsSortToDaemon(sortKey));
 
-                var rows = BuildTopAppRows(breakdown.Apps, sortKey);
+                afkOnlyFilterEnabled = AfkOnlyTopAppsCheckBox.IsChecked == true;
+                var filteredApps = breakdown.Apps.AsEnumerable();
+                if (afkOnlyFilterEnabled)
+                {
+                    var afkProcesses = BuildAfkProcessAllowSet();
+                    filteredApps = filteredApps.Where(app =>
+                    {
+                        var process = app.ProcessName?.Trim();
+                        return !string.IsNullOrWhiteSpace(process) && afkProcesses.Contains(process);
+                    });
+                }
+
+                var rows = BuildTopAppRows(filteredApps, sortKey);
 
                 if (rows.Count == 0)
                 {
                     rows.Add(new AppDisplayRow
                     {
-                        DisplayName = "No helper-attributed data in this range yet",
+                        DisplayName = afkOnlyFilterEnabled
+                            ? "No AFK-attributed app activity in this range yet"
+                            : "No helper-attributed data in this range yet",
                         UsageText = "-",
                         ProcessText = "",
                         LastSeenText = "",
@@ -1301,6 +1441,180 @@ namespace SingularityMonitor.Viewer.Views
                 DeleteCapButton.IsEnabled = false;
                 CapStatusText.Text = $"Cap definitions unavailable: {ex.Message}";
             }
+        }
+
+        private async Task RefreshAfkTimelineAsync()
+        {
+            try
+            {
+                var (startUtc, endUtc) = ResolveTopAppsRangeUtc();
+                var startTs = startUtc.ToUnixTimeSeconds();
+                var endTs = endUtc.ToUnixTimeSeconds();
+                AfkTimelineRangeText.Text =
+                    $"({startUtc.LocalDateTime:yyyy-MM-dd} to {endUtc.LocalDateTime.AddSeconds(-1):yyyy-MM-dd})";
+
+                var response = await daemonClient.GetAfkAuditAsync(
+                    startTs: startTs,
+                    endTs: endTs,
+                    limit: 1000);
+                latestAfkWindows = response.AfkWindows
+                    .Where(window => window.EndTs >= startTs && window.StartTs < endTs)
+                    .OrderByDescending(window => window.StartTs)
+                    .ToList();
+
+                var previousSelection = AfkTimelineList.SelectedItem as AfkTimelineRow;
+                var rows = latestAfkWindows
+                    .Select(BuildAfkTimelineRow)
+                    .ToList();
+
+                AfkTimelineList.ItemsSource = rows;
+                AfkTimelineStatusText.Text = rows.Count == 0
+                    ? "No AFK windows in selected range."
+                    : $"{rows.Count} AFK window(s) in selected range.";
+
+                var selected = previousSelection is null
+                    ? null
+                    : rows.FirstOrDefault(row => row.SelectionKey == previousSelection.SelectionKey);
+                selected ??= rows.FirstOrDefault();
+                AfkTimelineList.SelectedItem = selected;
+                RefreshSelectedAfkWindowApps();
+            }
+            catch (Exception ex)
+            {
+                latestAfkWindows = new List<Services.AfkWindowUsage>();
+                AfkTimelineList.ItemsSource = new List<AfkTimelineRow>();
+                AfkWindowAppsList.ItemsSource = new List<AfkWindowAppRow>();
+                AfkTimelineStatusText.Text = $"Failed to load AFK timeline: {ex.Message}";
+            }
+        }
+
+        private void RefreshSelectedAfkWindowApps()
+        {
+            if (AfkTimelineList.SelectedItem is not AfkTimelineRow selected)
+            {
+                AfkWindowAppsList.ItemsSource = new List<AfkWindowAppRow>
+                {
+                    new()
+                    {
+                        AppText = "Select an AFK window to view top apps",
+                        UsageText = "-",
+                        SplitText = "-",
+                        LastSeenText = "-",
+                    },
+                };
+                return;
+            }
+
+            var rows = selected.Window.TopApps
+                .OrderByDescending(app => app.BytesSent + app.BytesRecv)
+                .Select(app => new AfkWindowAppRow
+                {
+                    AppText = string.IsNullOrWhiteSpace(app.DisplayName)
+                        ? app.ProcessName
+                        : $"{app.DisplayName} ({app.ProcessName})",
+                    UsageText = FormatBytes(app.BytesSent + app.BytesRecv),
+                    SplitText = $"Up {FormatBytes(app.BytesSent)} | Down {FormatBytes(app.BytesRecv)}",
+                    LastSeenText = app.LastSeenTs > 0
+                        ? $"Last seen {DateTimeOffset.FromUnixTimeSeconds(app.LastSeenTs).ToLocalTime():g}"
+                        : "Last seen -",
+                })
+                .ToList();
+
+            if (rows.Count == 0)
+            {
+                rows.Add(new AfkWindowAppRow
+                {
+                    AppText = "No app usage recorded in this AFK window",
+                    UsageText = "-",
+                    SplitText = "-",
+                    LastSeenText = "-",
+                });
+            }
+
+            AfkWindowAppsList.ItemsSource = rows;
+        }
+
+        private static AfkTimelineRow BuildAfkTimelineRow(Services.AfkWindowUsage window)
+        {
+            var startLocal = DateTimeOffset.FromUnixTimeSeconds(window.StartTs).ToLocalTime();
+            var endTs = window.EndTs > window.StartTs ? window.EndTs - 1 : window.EndTs;
+            var endLocal = DateTimeOffset.FromUnixTimeSeconds(endTs).ToLocalTime();
+            var topApps = BuildAfkTopAppsPreview(window.TopApps);
+            var duration = TimeSpan.FromSeconds(window.DurationSeconds);
+
+            return new AfkTimelineRow
+            {
+                SelectionKey = $"{window.StartTs}:{window.EndTs}",
+                WindowText = $"{startLocal:g} - {endLocal:g}",
+                DurationText = duration.TotalHours >= 1
+                    ? $"{(int)duration.TotalHours}h {duration.Minutes}m"
+                    : $"{duration.Minutes}m {duration.Seconds}s",
+                UsageText = FormatBytes(window.BytesSent + window.BytesRecv),
+                TopAppsPreviewText = topApps,
+                Window = window,
+            };
+        }
+
+        private static string BuildAfkTopAppsPreview(IReadOnlyCollection<Services.AppBreakdownRow> apps)
+        {
+            if (apps.Count == 0)
+            {
+                return "No top apps";
+            }
+
+            var top = apps
+                .Take(2)
+                .Select(app => string.IsNullOrWhiteSpace(app.DisplayName) ? app.ProcessName : app.DisplayName)
+                .ToList();
+            if (apps.Count > top.Count)
+            {
+                top.Add($"+{apps.Count - top.Count} more");
+            }
+
+            return string.Join(", ", top);
+        }
+
+        private HashSet<string> BuildAfkProcessAllowSet()
+        {
+            return latestAfkWindows
+                .SelectMany(window => window.TopApps)
+                .Select(app => app.ProcessName?.Trim())
+                .Where(process => !string.IsNullOrWhiteSpace(process))
+                .Cast<string>()
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static Services.AfkWindowUsage[] BuildExportAfkWindows(
+            IEnumerable<Services.AfkWindowUsage> windows,
+            long startTs,
+            long endTs,
+            string? selectedProcess)
+        {
+            var normalizedSelectedProcess = selectedProcess?.Trim();
+            var hasSelectedProcess = !string.IsNullOrWhiteSpace(normalizedSelectedProcess);
+
+            return windows
+                .Where(window => window.EndTs >= startTs && window.StartTs < endTs)
+                .Select(window =>
+                {
+                    var topApps = window.TopApps
+                        .Where(app => !hasSelectedProcess
+                            || app.ProcessName.Equals(
+                                normalizedSelectedProcess,
+                                StringComparison.OrdinalIgnoreCase))
+                        .ToArray();
+
+                    return new Services.AfkWindowUsage
+                    {
+                        StartTs = window.StartTs,
+                        EndTs = window.EndTs,
+                        DurationSeconds = window.DurationSeconds,
+                        BytesSent = window.BytesSent,
+                        BytesRecv = window.BytesRecv,
+                        TopApps = topApps,
+                    };
+                })
+                .ToArray();
         }
 
         private async Task RefreshAlertsHistoryAsync()
@@ -2207,6 +2521,7 @@ namespace SingularityMonitor.Viewer.Views
             IncludeSummaryCheckBox.IsChecked = includeSummary;
             IncludeAppsCheckBox.IsChecked = includeApps;
             IncludeInterfacesCheckBox.IsChecked = includeInterfaces;
+            IncludeAfkCheckBox.IsChecked = DefaultExportIncludeAfk;
         }
 
         private string ResolveSelectedExportAppScope()
@@ -2294,6 +2609,53 @@ namespace SingularityMonitor.Viewer.Views
             return $"Interface cap ({BuildInterfaceDisplayName(match)})";
         }
 
+        private static string BuildRetentionCleanupStatusText(Services.DaemonStatus status)
+        {
+            var result = status.RetentionCleanupLastResult?.Trim().ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(result) || result == "never")
+            {
+                return "Retention cleanup has not run yet.";
+            }
+
+            if (result == "skipped_unlimited")
+            {
+                var skippedAt = status.RetentionCleanupLastRunTs > 0
+                    ? DateTimeOffset.FromUnixTimeSeconds(status.RetentionCleanupLastRunTs).ToLocalTime().ToString("g")
+                    : "unknown";
+                return $"Retention cleanup skipped (retention_days=0) at {skippedAt}.";
+            }
+
+            var runAtText = status.RetentionCleanupLastRunTs > 0
+                ? DateTimeOffset.FromUnixTimeSeconds(status.RetentionCleanupLastRunTs).ToLocalTime().ToString("g")
+                : "unknown";
+            var cutoffText = status.RetentionCleanupCutoffTs > 0
+                ? DateTimeOffset.FromUnixTimeSeconds(status.RetentionCleanupCutoffTs).ToLocalTime().ToString("g")
+                : "n/a";
+
+            return $"Retention cleanup {result} at {runAtText}. " +
+                   $"Cutoff {cutoffText}. Deleted {status.RetentionCleanupDeletedUsageRecords} usage rows, {status.RetentionCleanupDeletedAfkWindows} AFK windows.";
+        }
+
+        private static string BuildReliabilityStatusText(Services.DaemonStatus status)
+        {
+            var lastStartText = status.DaemonLastStartTs > 0
+                ? DateTimeOffset.FromUnixTimeSeconds(status.DaemonLastStartTs).ToLocalTime().ToString("g")
+                : "unknown";
+            var baseline =
+                $"Daemon starts {status.DaemonStartCount}, clean exits {status.DaemonCleanExitCount}, unexpected exits {status.DaemonUnexpectedExitCount}, poll errors {status.PollErrorCount}, IPC errors {status.IpcErrorCount}. Last start {lastStartText}.";
+
+            if (status.DaemonLastErrorTs <= 0 || string.IsNullOrWhiteSpace(status.DaemonLastErrorStage))
+            {
+                return baseline;
+            }
+
+            var lastErrorText = DateTimeOffset.FromUnixTimeSeconds(status.DaemonLastErrorTs).ToLocalTime().ToString("g");
+            var message = string.IsNullOrWhiteSpace(status.DaemonLastErrorMessage)
+                ? "no message"
+                : status.DaemonLastErrorMessage;
+            return baseline + $" Last error {status.DaemonLastErrorStage} at {lastErrorText}: {message}";
+        }
+
         private static int ToMondayOffset(DayOfWeek day)
         {
             return day switch
@@ -2350,8 +2712,42 @@ namespace SingularityMonitor.Viewer.Views
 
         private static string EscapeCsv(string value)
         {
-            var escaped = value.Replace("\"", "\"\"");
+            var sanitized = string.IsNullOrEmpty(value) ? value : NeutralizeCsvFormula(value);
+            var escaped = sanitized.Replace("\"", "\"\"");
             return '"' + escaped + '"';
+        }
+
+        private static string NeutralizeCsvFormula(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return value;
+            }
+
+            var leading = value[0];
+            return leading is '=' or '+' or '-' or '@'
+                ? "'" + value
+                : value;
+        }
+
+        private static string CreateUniqueExportPath(string directory, string baseFileName, string extension)
+        {
+            var candidate = Path.Combine(directory, baseFileName + extension);
+            if (!File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            for (var suffix = 1; suffix < 10_000; suffix++)
+            {
+                candidate = Path.Combine(directory, $"{baseFileName}_{suffix:000}{extension}");
+                if (!File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            throw new IOException($"Unable to create unique export path in {directory}.");
         }
 
         public sealed class AppDisplayRow
@@ -2520,6 +2916,32 @@ namespace SingularityMonitor.Viewer.Views
             public string WindowText { get; init; } = string.Empty;
 
             public string FiredAtText { get; init; } = string.Empty;
+        }
+
+        public sealed class AfkTimelineRow
+        {
+            public string SelectionKey { get; init; } = string.Empty;
+
+            public string WindowText { get; init; } = string.Empty;
+
+            public string DurationText { get; init; } = string.Empty;
+
+            public string UsageText { get; init; } = string.Empty;
+
+            public string TopAppsPreviewText { get; init; } = string.Empty;
+
+            public Services.AfkWindowUsage Window { get; init; } = new();
+        }
+
+        public sealed class AfkWindowAppRow
+        {
+            public string AppText { get; init; } = string.Empty;
+
+            public string UsageText { get; init; } = string.Empty;
+
+            public string SplitText { get; init; } = string.Empty;
+
+            public string LastSeenText { get; init; } = string.Empty;
         }
     }
 }

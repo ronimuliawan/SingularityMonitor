@@ -67,6 +67,16 @@ public sealed class DaemonClient
         _ = ParsePayload<JsonElement>(envelope);
     }
 
+    public async Task<CompactDatabaseResponse> CompactDatabaseAsync(CancellationToken cancellationToken = default)
+    {
+        var envelope = await SendRequestAsync(
+            "COMPACT_DATABASE",
+            payload: new { },
+            cancellationToken);
+
+        return ParsePayload<CompactDatabaseResponse>(envelope);
+    }
+
     public async Task<UsageSummary> GetTodaySummaryAsync(CancellationToken cancellationToken = default)
     {
         var now = DateTimeOffset.UtcNow;
@@ -239,6 +249,7 @@ public sealed class DaemonClient
         string? interfaceGuid = null,
         string? windowKind = null,
         string? thresholdKind = null,
+        string? deliveryState = null,
         int limit = 200,
         CancellationToken cancellationToken = default)
     {
@@ -254,11 +265,50 @@ public sealed class DaemonClient
                 interface_guid = interfaceGuid,
                 window_kind = windowKind,
                 threshold_kind = thresholdKind,
+                delivery_state = deliveryState,
                 limit = normalizedLimit,
             },
             cancellationToken);
 
         return ParsePayload<CapAlertEventsResponse>(envelope);
+    }
+
+    public async Task<MarkCapAlertEventsDeliveredResponse> MarkCapAlertEventsDeliveredAsync(
+        long[] eventIds,
+        CancellationToken cancellationToken = default)
+    {
+        var envelope = await SendRequestAsync(
+            "MARK_CAP_ALERT_EVENTS_DELIVERED",
+            payload: new
+            {
+                event_ids = eventIds,
+            },
+            cancellationToken);
+
+        return ParsePayload<MarkCapAlertEventsDeliveredResponse>(envelope);
+    }
+
+    public async Task<AfkAuditResponse> GetAfkAuditAsync(
+        long? startTs = null,
+        long? endTs = null,
+        int? limit = null,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedLimit = limit.HasValue
+            ? Math.Clamp(limit.Value, 1, 1000)
+            : (int?)null;
+
+        var envelope = await SendRequestAsync(
+            "GET_AFK_AUDIT",
+            payload: new
+            {
+                start_ts = startTs,
+                end_ts = endTs,
+                limit = normalizedLimit,
+            },
+            cancellationToken);
+
+        return ParsePayload<AfkAuditResponse>(envelope);
     }
 
     private static T ParsePayload<T>(IpcEnvelope envelope)
@@ -332,6 +382,9 @@ public sealed class DaemonStatus
     [JsonPropertyName("memory_bytes")]
     public ulong MemoryBytes { get; set; }
 
+    [JsonPropertyName("db_size_bytes")]
+    public ulong DbSizeBytes { get; set; }
+
     [JsonPropertyName("last_poll_ts")]
     public long LastPollTs { get; set; }
 
@@ -346,6 +399,66 @@ public sealed class DaemonStatus
 
     [JsonPropertyName("import_progress_pct")]
     public int ImportProgressPct { get; set; }
+
+    [JsonPropertyName("retention_cleanup_last_run_ts")]
+    public long RetentionCleanupLastRunTs { get; set; }
+
+    [JsonPropertyName("retention_cleanup_cutoff_ts")]
+    public long RetentionCleanupCutoffTs { get; set; }
+
+    [JsonPropertyName("retention_cleanup_deleted_usage_records")]
+    public ulong RetentionCleanupDeletedUsageRecords { get; set; }
+
+    [JsonPropertyName("retention_cleanup_deleted_afk_windows")]
+    public ulong RetentionCleanupDeletedAfkWindows { get; set; }
+
+    [JsonPropertyName("retention_cleanup_last_result")]
+    public string RetentionCleanupLastResult { get; set; } = string.Empty;
+
+    [JsonPropertyName("daemon_start_count")]
+    public ulong DaemonStartCount { get; set; }
+
+    [JsonPropertyName("daemon_clean_exit_count")]
+    public ulong DaemonCleanExitCount { get; set; }
+
+    [JsonPropertyName("daemon_unexpected_exit_count")]
+    public ulong DaemonUnexpectedExitCount { get; set; }
+
+    [JsonPropertyName("daemon_last_start_ts")]
+    public long DaemonLastStartTs { get; set; }
+
+    [JsonPropertyName("daemon_last_exit_ts")]
+    public long DaemonLastExitTs { get; set; }
+
+    [JsonPropertyName("daemon_last_error_ts")]
+    public long DaemonLastErrorTs { get; set; }
+
+    [JsonPropertyName("daemon_last_error_stage")]
+    public string DaemonLastErrorStage { get; set; } = string.Empty;
+
+    [JsonPropertyName("daemon_last_error_message")]
+    public string DaemonLastErrorMessage { get; set; } = string.Empty;
+
+    [JsonPropertyName("poll_error_count")]
+    public ulong PollErrorCount { get; set; }
+
+    [JsonPropertyName("ipc_error_count")]
+    public ulong IpcErrorCount { get; set; }
+}
+
+public sealed class CompactDatabaseResponse
+{
+    [JsonPropertyName("before_bytes")]
+    public ulong BeforeBytes { get; set; }
+
+    [JsonPropertyName("after_bytes")]
+    public ulong AfterBytes { get; set; }
+
+    [JsonPropertyName("reclaimed_bytes")]
+    public ulong ReclaimedBytes { get; set; }
+
+    [JsonPropertyName("duration_ms")]
+    public ulong DurationMs { get; set; }
 }
 
 public sealed class SettingsResponse
@@ -562,6 +675,39 @@ public sealed class CapAlertEvent
 
     [JsonPropertyName("delivered_at")]
     public long? DeliveredAt { get; set; }
+}
+
+public sealed class MarkCapAlertEventsDeliveredResponse
+{
+    [JsonPropertyName("updated")]
+    public uint Updated { get; set; }
+}
+
+public sealed class AfkAuditResponse
+{
+    [JsonPropertyName("afk_windows")]
+    public AfkWindowUsage[] AfkWindows { get; set; } = Array.Empty<AfkWindowUsage>();
+}
+
+public sealed class AfkWindowUsage
+{
+    [JsonPropertyName("start_ts")]
+    public long StartTs { get; set; }
+
+    [JsonPropertyName("end_ts")]
+    public long EndTs { get; set; }
+
+    [JsonPropertyName("duration_seconds")]
+    public uint DurationSeconds { get; set; }
+
+    [JsonPropertyName("bytes_sent")]
+    public ulong BytesSent { get; set; }
+
+    [JsonPropertyName("bytes_recv")]
+    public ulong BytesRecv { get; set; }
+
+    [JsonPropertyName("top_apps")]
+    public AppBreakdownRow[] TopApps { get; set; } = Array.Empty<AppBreakdownRow>();
 }
 
 public sealed class IpcEnvelope

@@ -14,7 +14,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 fn main() {
     if let Err(error) = entrypoint() {
@@ -61,13 +61,44 @@ fn run_console_mode(run_once: bool, config: config::AppConfig) -> Result<()> {
         signal.store(true, Ordering::SeqCst);
     })?;
 
-    let mut collector = runtime::CollectorRuntime::new(config)?;
-    if run_once {
-        collector.run_once()?;
-        info!("completed single poll cycle");
-        return Ok(());
+    let reliability_db = db::Db::initialize(&config.db_path)?;
+    if let Err(error) = reliability_db.mark_daemon_start(time::unix_timestamp()) {
+        warn!("failed to mark daemon start: {error:#}");
     }
 
-    info!("starting console collector loop");
-    collector.run(stop_requested)
+    let run_result = (|| -> Result<()> {
+        let mut collector = runtime::CollectorRuntime::new(config)?;
+        if run_once {
+            collector.run_once()?;
+            info!("completed single poll cycle");
+            return Ok(());
+        }
+
+        info!("starting console collector loop");
+        collector.run(stop_requested)
+    })();
+
+    match run_result {
+        Ok(()) => {
+            if let Err(error) = reliability_db.mark_daemon_clean_exit(time::unix_timestamp()) {
+                warn!("failed to mark daemon clean exit: {error:#}");
+            }
+            Ok(())
+        }
+        Err(error) => {
+            let stage = if run_once {
+                "console_run_once"
+            } else {
+                "console_run"
+            };
+            if let Err(record_error) = reliability_db.record_daemon_error(
+                time::unix_timestamp(),
+                stage,
+                &error.to_string(),
+            ) {
+                warn!("failed to record daemon error: {record_error:#}");
+            }
+            Err(error)
+        }
+    }
 }

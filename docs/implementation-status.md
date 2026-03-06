@@ -120,6 +120,51 @@
 - **Cap workflow wiring:** cap create/update/delete and global refresh flows now refresh alerts history so the panel tracks newly emitted threshold events.
 - **Regression coverage:** daemon tests now verify alert-history ordering/limit behavior and scope+threshold filter behavior.
 
+## Toast delivery while viewer closed (P1-04)
+
+- **Delivery-state API completion:** cap-alert history request now supports `delivery_state` filtering and daemon exposes `MARK_CAP_ALERT_EVENTS_DELIVERED` to atomically move events from `new` to `delivered`.
+- **Daemon idempotency coverage:** DB tests now validate mark-delivered idempotency and `new`/`delivered` filtering behavior for cap-alert events.
+- **Tray notification loop:** viewer tray controller now polls pending (`delivery_state=new`) cap alerts, raises user-session notification balloons, and then marks successfully surfaced events as delivered.
+- **Reliability behavior:** close-to-tray mode now continues polling and alert delivery while the main window is hidden, with at-least-once retry when daemon mark-delivered calls fail.
+
+## AFK timeline and AFK-only filter (P1-07)
+
+- **AFK client API:** viewer daemon client now exposes `GET_AFK_AUDIT` with typed AFK window and top-app DTOs.
+- **Timeline panel:** main page now includes an `AFK Timeline` card with selected-range context, refresh action, AFK window list, and selected-window top-app details.
+- **Range wiring:** AFK timeline refresh now runs on initial load, global refresh, and range-apply/preset flows so AFK panels track the active analysis window.
+- **AFK-only app filter:** Top Apps now supports an `AFK only` filter that narrows app rows to processes observed in AFK windows for the selected range.
+- **Validation pass:** `scripts/p1-05-afk-pipeline-smoke.ps1` re-run passes after AFK UI/filter integration.
+
+## AFK export flow (P1-08)
+
+- **Export controls:** export options now include AFK section selection alongside summary/apps/interfaces.
+- **CSV AFK sections:** CSV export now writes AFK window rows and AFK top-app rows, preserving selected-range and selected-app scope filtering.
+- **JSON parity:** JSON export payload now includes `afk_windows` for format consistency with CSV.
+- **Range-aware AFK query:** `GET_AFK_AUDIT` now supports optional `start_ts`/`end_ts`/`limit` request parameters, and viewer export/timeline calls use range-bounded AFK queries.
+
+## Retention scheduler and status wiring (P1-09)
+
+- **Daemon scheduler:** runtime now executes retention cleanup once per UTC day after poll persistence, honoring `retention_days` and skipping deletes for unlimited retention (`0`).
+- **Cleanup scope:** retention cleanup now prunes old `usage_records` (`ts < cutoff`) and old `afk_windows` (`end_ts < cutoff`) inside a transaction.
+- **Cleanup telemetry:** daemon status now includes retention cleanup metadata (last run, cutoff, deleted usage rows, deleted AFK windows, last result).
+- **Viewer status wiring:** Collector Settings now surface retention cleanup status text from daemon status.
+- **Regression coverage:** daemon DB tests now validate unlimited-retention skip behavior and once-per-day cleanup gating with cutoff boundary semantics.
+- **Smoke validation:** `scripts/m4-settings-hotreload-smoke.ps1` and `scripts/p1-05-afk-pipeline-smoke.ps1` re-run pass after scheduler and AFK query updates.
+
+## DB compact controls (P1-10)
+
+- **Manual compact IPC:** shared contracts now expose `COMPACT_DATABASE` request/response with before/after/reclaimed byte metrics and duration.
+- **Daemon compact action:** daemon DB layer now executes `wal_checkpoint(TRUNCATE)` + `VACUUM` + `PRAGMA optimize`, and reports compact metrics.
+- **Size accounting:** daemon DB-size reporting now includes SQLite sidecar files (`.db`, `-wal`, `-shm`) for more accurate on-disk footprint visibility.
+- **Viewer controls:** settings panel now includes `Compact DB` action and dedicated DB size status text, with compact results surfaced in settings status.
+
+## IPC/schema integration tests (R-03)
+
+- **Runtime IPC coverage:** added integration-style runtime tests that exercise supported IPC methods with valid payloads and assert success/error semantics.
+- **Contract validation checks:** runtime tests now explicitly validate cap-alert delivery payload rejection paths and daemon-status retention field presence.
+- **Schema invariants:** daemon DB tests now verify initialize idempotency, partial-schema bootstrap behavior, and required table/column/index presence.
+- **Compact path tests:** daemon DB tests now validate compact metric consistency and post-compact DB usability.
+
 ## R-02 performance gates automation
 
 - **Gate orchestrator:** added `scripts/r-02-performance-gates.ps1` to enforce RSS, query latency, import duration, and daemon CPU gates with fail-fast behavior.
@@ -167,6 +212,65 @@
 - **GitHub Actions workflow:** added `.github/workflows/ci.yml` for push/pull_request validation.
 - **CI scope:** runs on Windows with Rust workspace build/tests plus viewer Release build.
 
+## Crash reporting scaffolding and reliability metrics (R-04)
+
+- **Daemon reliability persistence:** daemon now stores start/clean-exit/unexpected-exit counters, last error metadata, and transport/poll error counts in SQLite-backed settings and returns them via `GET_DAEMON_STATUS`.
+- **Runtime hooks:** console/service startup, shutdown, poll-loop failures, and IPC transport failures now record best-effort reliability events without changing normal request semantics.
+- **Viewer status surface:** main page status text now summarizes daemon reliability counters and last-error details for operator visibility.
+- **Process-level logging:** viewer and helper now append best-effort JSONL reliability events on start, clean exit, and unhandled failure paths.
+- **Validation:** `cargo test --workspace`, `cargo test -p daemon`, `cargo build -p helper`, and `dotnet build "viewer\SingularityMonitor.Viewer.csproj" -c Release` pass after instrumentation.
+
+## MSIX packaging baseline (R-05)
+
+- **Project packaging mode:** viewer packaging properties now default to unpackaged local development while allowing explicit MSIX publish builds through project properties and `scripts/build-viewer.cmd --msix`.
+- **Manifest finalization:** `viewer/Package.appxmanifest` now uses Singularity Monitor identity/display metadata instead of template placeholders.
+- **Packaged runtime behavior:** helper startup logic now detects package identity, avoids HKCU Run registration in packaged mode, and degrades cleanly when a bundled helper is unavailable.
+- **CI artifact path:** GitHub Actions now publishes the generated MSIX artifact from `viewer/AppPackages/`.
+- **Validation:** `dotnet publish "viewer\SingularityMonitor.Viewer.csproj" -c Release -p:RuntimeIdentifier=win-x64 -p:WindowsPackageType=MSIX -p:GenerateAppxPackageOnBuild=true -p:AppxPackageSigningEnabled=false -p:UapAppxPackageBuildMode=SideloadOnly -p:AppxBundle=Never` produces `viewer/AppPackages/SingularityMonitor.Viewer_1.0.0.0_x64_Test/SingularityMonitor.Viewer_1.0.0.0_x64.msix`.
+
+## Security hardening review (R-11)
+
+- **Pipe ACL hardening:** named-pipe creation now applies an explicit local-only SDDL security descriptor and `PIPE_REJECT_REMOTE_CLIENTS`.
+- **Data-root safety:** `SM_DATA_ROOT` now requires an absolute path and is canonicalized after creation before daemon use.
+- **Export safety:** viewer export writes now avoid same-name overwrite collisions and neutralize CSV formula injection prefixes.
+- **Validation:** `cargo fmt --all`, `cargo test --workspace`, and release viewer build/package validation pass after the hardening changes.
+
+## Release signing workflow (R-06)
+
+- **Packaging script:** `scripts\release-msix.ps1` now builds a release-style MSIX, patches manifest publisher/version for the release build, bundles `helper.exe`, and optionally signs the output with a CI-provided PFX.
+- **CI release path:** `.github\workflows\release.yml` now packages release artifacts on tags or manual dispatch, uploads the MSIX, and carries the same inputs into winget manifest generation.
+- **Config contract:** release signing is activated through `MSIX_CERT_BASE64`, `MSIX_CERT_PASSWORD`, `MSIX_TIMESTAMP_URL`, and `MSIX_PUBLISHER` repository configuration.
+- **Packaging stability:** viewer publish profiles now disable trimming for packaged release builds to avoid runtime breakage from reflection-based JSON paths.
+
+## Accessibility audit and remediation (R-08)
+
+- **Theme safety:** `viewer\App.xaml` now exposes theme-aware page, card, and text brushes so the main dashboard no longer relies on fixed dark-only colors.
+- **Narrator names:** main viewer controls now set explicit `AutomationProperties.Name` values for filters, date pickers, settings inputs, cap controls, and refresh/export actions.
+- **Live regions:** status text blocks and empty-state text now use polite live announcements so import, settings, AFK, alerts, reliability, and chart updates are surfaced to assistive technology.
+- **Keyboard reachability:** read-only result lists that previously opted out of tab flow are now reachable for keyboard and screen-reader review.
+- **Audit record:** manual validation guidance and shipped fixes are documented in `docs\accessibility-audit.md`.
+
+## User docs finalization (R-09)
+
+- **Install guide:** `docs\install.md` now covers MSIX viewer install, daemon service setup, update, uninstall, and on-disk data/log locations.
+- **Usage guide:** `docs\user-guide.md` documents onboarding, dashboard navigation, exports, AFK views, alerts, settings, and tray behavior.
+- **Troubleshooting guide:** `docs\troubleshooting.md` adds symptom-driven recovery steps for daemon offline, helper failures, export issues, and MSIX install problems.
+- **Entry points:** `README.md` now links the user and release documentation set directly from the repository root.
+
+## Winget manifest prep (R-07, in progress)
+
+- **Manifest generation:** `scripts\generate-winget-manifests.ps1` now derives installer metadata from a built MSIX and writes a validated multi-file winget manifest set under `packaging\winget\generated\`.
+- **Validation path:** `scripts\validate-winget.ps1` now runs `winget validate` against the generated manifest directory.
+- **Current rehearsal:** generated unsigned manifests validate successfully against a placeholder installer URL, and `packaging\winget\README.md` documents the signed localhost install/upgrade/uninstall rehearsal flow still to be executed.
+- **Intentional stop point:** signed winget lifecycle rehearsal is deferred until a trusted certificate and a disposable test machine are available, so the current workstation is not modified for trust-state testing.
+- **Operator runbook:** `docs\winget-rehearsal-runbook.md` now captures the disposable-machine checklist, step order, checkpoints, and cleanup path for the final signed rehearsal.
+
+## QA matrix baseline (R-10, in progress)
+
+- **Matrix artifact:** `docs\qa-matrix.md` now captures the target Windows 11 environments and provides a per-machine execution worksheet for automated, manual, and packaging checks.
+- **Current state:** automated release validation is recorded for the active dev workstation, while the remaining 22H2/23H2/24H2 hardware rows stay open for final launch validation.
+- **Intentional stop point:** signed install/upgrade/uninstall rehearsal and cross-hardware execution remain open by design rather than being forced onto the current machine.
+
 ## Delivered components
 
 - Rust workspace with four crates:
@@ -180,5 +284,6 @@
 ## Outstanding work by phase
 
 - **P0 completion:** all tracked P0 items are complete.
-- **P1:** toast routing while viewer is closed, AFK timeline + AFK export UI, retention/compact workflows
+- **P1:** all tracked P1 items are complete.
 - **P2:** heatmap, forecasting, anomaly model, confidence interval surfaces
+- **Release:** signed winget lifecycle rehearsal, multi-hardware QA matrix execution, and final launch sign-off

@@ -1,5 +1,6 @@
 use shared_contracts::{IpcMessage, MessageType};
 use std::ffi::OsStr;
+use std::mem::size_of;
 use std::os::windows::ffi::OsStrExt;
 use std::sync::{
     Arc,
@@ -10,18 +11,36 @@ use std::time::Duration;
 use tracing::{error, warn};
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_BROKEN_PIPE, ERROR_PIPE_CONNECTED, GetLastError, HANDLE,
-    INVALID_HANDLE_VALUE,
+    INVALID_HANDLE_VALUE, LocalFree,
 };
+use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
+use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 use windows_sys::Win32::Storage::FileSystem::{
     FlushFileBuffers, PIPE_ACCESS_DUPLEX, ReadFile, WriteFile,
 };
 use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
-    PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE,
+    PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
+
+const PIPE_SECURITY_DESCRIPTOR_SDDL: &str = "D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;LS)(A;;GA;;;IU)";
+
+struct OwnedSecurityDescriptor(*mut core::ffi::c_void);
+
+impl Drop for OwnedSecurityDescriptor {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe {
+                LocalFree(self.0);
+            }
+        }
+    }
+}
 
 pub trait IpcRequestHandler: Send + Sync + 'static {
     fn handle(&self, request: IpcMessage) -> IpcMessage;
+
+    fn on_transport_error(&self, _message: &str) {}
 }
 
 pub fn spawn_server<H>(
@@ -56,6 +75,7 @@ where
 
             if let Err(error) = process_client(handle, &*handler) {
                 warn!("pipe client handling error: {error}");
+                handler.on_transport_error(&error);
             }
 
             unsafe {
@@ -68,16 +88,17 @@ where
 
 fn create_pipe_instance(pipe_name: &str) -> Result<HANDLE, String> {
     let name = to_wide(pipe_name);
+    let (mut security_attributes, _descriptor) = build_pipe_security_attributes()?;
     let handle = unsafe {
         CreateNamedPipeW(
             name.as_ptr(),
             PIPE_ACCESS_DUPLEX,
-            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
             PIPE_UNLIMITED_INSTANCES,
             16 * 1024,
             16 * 1024,
             0,
-            std::ptr::null(),
+            &mut security_attributes,
         )
     };
 
@@ -87,6 +108,34 @@ fn create_pipe_instance(pipe_name: &str) -> Result<HANDLE, String> {
     }
 
     Ok(handle)
+}
+
+fn build_pipe_security_attributes() -> Result<(SECURITY_ATTRIBUTES, OwnedSecurityDescriptor), String>
+{
+    let sddl = to_wide(PIPE_SECURITY_DESCRIPTOR_SDDL);
+    let mut security_descriptor = std::ptr::null_mut();
+    let ok = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.as_ptr(),
+            1,
+            &mut security_descriptor,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        let code = unsafe { GetLastError() };
+        return Err(format!(
+            "ConvertStringSecurityDescriptorToSecurityDescriptorW failed with code {code}"
+        ));
+    }
+
+    let attrs = SECURITY_ATTRIBUTES {
+        nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: security_descriptor,
+        bInheritHandle: 0,
+    };
+
+    Ok((attrs, OwnedSecurityDescriptor(security_descriptor)))
 }
 
 fn connect_pipe(handle: HANDLE) -> bool {

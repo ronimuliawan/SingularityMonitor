@@ -6,52 +6,47 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:local="using:SingularityMonitor.Viewer"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    mc:Ignorable="d">
-    <Grid>
-        <Grid.Background>
-            <LinearGradientBrush EndPoint="1,1" StartPoint="0,0">
-                <GradientStop Color="#13212B" Offset="0" />
-                <GradientStop Color="#0F171F" Offset="1" />
-            </LinearGradientBrush>
-        </Grid.Background>
-
-        <ScrollViewer>
+    mc:Ignorable="d"
+    AutomationProperties.Name="Singularity Monitor dashboard">
+    <Grid Background="{ThemeResource PageBackgroundBrush}">
+        <ScrollViewer AutomationProperties.Name="Dashboard content">
             <StackPanel Margin="28" Spacing="14">
                 <TextBlock FontSize="30" Style="{StaticResource HeaderTextStyle}" Text="Singularity Monitor" />
-                <TextBlock Foreground="#D4DCE2" Text="Low-footprint network telemetry for Windows 11." />
+                <TextBlock Foreground="{ThemeResource SecondaryTextBrush}" Text="Low-footprint network telemetry for Windows 11." />
 
-                <Border x:Name="OnboardingCard" Background="#213441" CornerRadius="12" Padding="16" Visibility="Collapsed">
+                <Border x:Name="OnboardingCard" Background="{ThemeResource ElevatedSurfaceBrush}" CornerRadius="12" Padding="16" Visibility="Collapsed">
                     <StackPanel Spacing="10">
                         <TextBlock FontSize="18" Style="{StaticResource HeaderTextStyle}" Text="First-run setup" />
-                        <TextBlock Foreground="#D4DCE2" Text="Import the last 60 days once so charts and app breakdowns start with historical context. This runs in the helper process and can take a few minutes." TextWrapping="Wrap" />
-                        <TextBlock x:Name="OnboardingStatusText" Foreground="#BFD0DE" Text="" TextWrapping="Wrap" />
+                        <TextBlock Foreground="{ThemeResource SecondaryTextBrush}" Text="Import the last 60 days once so charts and app breakdowns start with historical context. This runs in the helper process and can take a few minutes." TextWrapping="Wrap" />
+                        <TextBlock x:Name="OnboardingStatusText" Foreground="{ThemeResource StatusTextBrush}" AutomationProperties.LiveSetting="Polite" Text="" TextWrapping="Wrap" />
                         <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Button x:Name="OnboardingImportButton" Click="OnOnboardingImportClicked" Content="Run Initial 60-Day Import" Style="{StaticResource PrimaryAction}" />
-                            <Button x:Name="OnboardingSkipButton" Click="OnOnboardingSkipClicked" Content="Skip and hide" />
+                            <Button x:Name="OnboardingImportButton" Click="OnOnboardingImportClicked" AutomationProperties.Name="Run initial 60 day import" Content="Run Initial 60-Day Import" Style="{StaticResource PrimaryAction}" />
+                            <Button x:Name="OnboardingSkipButton" Click="OnOnboardingSkipClicked" AutomationProperties.Name="Skip onboarding card" Content="Skip and hide" />
                         </StackPanel>
                     </StackPanel>
                 </Border>
 
                 <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock VerticalAlignment="Center" Foreground="#B5C5D3" Text="Interface" />
-                    <ComboBox x:Name="InterfaceFilterComboBox" MinWidth="260" SelectionChanged="OnInterfaceFilterChanged" />
-                    <TextBlock VerticalAlignment="Center" Foreground="#B5C5D3" Text="Export Granularity" />
-                    <ComboBox x:Name="ExportGranularityComboBox" MinWidth="140" />
-                    <TextBlock VerticalAlignment="Center" Foreground="#B5C5D3" Text="Apps" />
-                    <ComboBox x:Name="ExportAppScopeComboBox" MinWidth="170" />
-                    <Button Click="OnExportCsvClicked" Content="Export CSV" />
-                    <Button Click="OnExportJsonClicked" Content="Export JSON" />
+                    <TextBlock VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Interface" />
+                    <ComboBox x:Name="InterfaceFilterComboBox" MinWidth="260" AutomationProperties.Name="Interface filter" SelectionChanged="OnInterfaceFilterChanged" />
+                    <TextBlock VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Export Granularity" />
+                    <ComboBox x:Name="ExportGranularityComboBox" MinWidth="140" AutomationProperties.Name="Export granularity" />
+                    <TextBlock VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Apps" />
+                    <ComboBox x:Name="ExportAppScopeComboBox" MinWidth="170" AutomationProperties.Name="Export app scope" />
+                    <Button Click="OnExportCsvClicked" AutomationProperties.Name="Export selected data to CSV" Content="Export CSV" />
+                    <Button Click="OnExportJsonClicked" AutomationProperties.Name="Export selected data to JSON" Content="Export JSON" />
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" Spacing="12">
                     <CheckBox x:Name="IncludeSummaryCheckBox" Content="Summary buckets" IsChecked="True" />
                     <CheckBox x:Name="IncludeAppsCheckBox" Content="Apps" IsChecked="True" />
                     <CheckBox x:Name="IncludeInterfacesCheckBox" Content="Interfaces" IsChecked="True" />
+                    <CheckBox x:Name="IncludeAfkCheckBox" Content="AFK" IsChecked="True" />
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock VerticalAlignment="Center" Foreground="#B5C5D3" Text="Overview Mode" />
-                    <ComboBox x:Name="OverviewModeComboBox" MinWidth="220" SelectionChanged="OnOverviewModeChanged" />
+                    <TextBlock VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Overview Mode" />
+                    <ComboBox x:Name="OverviewModeComboBox" MinWidth="220" AutomationProperties.Name="Overview mode" SelectionChanged="OnOverviewModeChanged" />
                 </StackPanel>
 
                 <Grid ColumnSpacing="12">
@@ -61,53 +56,53 @@
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
 
-                    <Border Grid.Column="0" Background="#1F2A33" CornerRadius="12" Padding="14">
+                    <Border Grid.Column="0" Background="{ThemeResource SurfaceBrush}" CornerRadius="12" Padding="14">
                         <StackPanel Spacing="4">
-                            <TextBlock x:Name="TodayCardTitleText" Foreground="#B5C5D3" Text="Today" />
+                            <TextBlock x:Name="TodayCardTitleText" Foreground="{ThemeResource TertiaryTextBrush}" Text="Today" />
                             <TextBlock x:Name="TodayTotalText" FontSize="22" Style="{StaticResource HeaderTextStyle}" Text="-" />
-                            <TextBlock x:Name="TodaySplitText" Foreground="#BFD0DE" Text="-" />
-                            <ProgressBar x:Name="TodayUploadShareBar" Height="8" Maximum="100" Minimum="0" Value="0" />
-                            <TextBlock x:Name="TodayUploadShareText" Foreground="#9AAEBE" FontSize="12" Text="Upload share -" />
+                            <TextBlock x:Name="TodaySplitText" Foreground="{ThemeResource StatusTextBrush}" Text="-" />
+                            <ProgressBar x:Name="TodayUploadShareBar" Height="8" AutomationProperties.Name="Today upload share" Maximum="100" Minimum="0" Value="0" />
+                            <TextBlock x:Name="TodayUploadShareText" Foreground="{ThemeResource MutedTextBrush}" FontSize="12" Text="Upload share -" />
                         </StackPanel>
                     </Border>
 
-                    <Border Grid.Column="1" Background="#1F2A33" CornerRadius="12" Padding="14">
+                    <Border Grid.Column="1" Background="{ThemeResource SurfaceBrush}" CornerRadius="12" Padding="14">
                         <StackPanel Spacing="4">
-                            <TextBlock x:Name="WeekCardTitleText" Foreground="#B5C5D3" Text="This Week" />
+                            <TextBlock x:Name="WeekCardTitleText" Foreground="{ThemeResource TertiaryTextBrush}" Text="This Week" />
                             <TextBlock x:Name="WeekTotalText" FontSize="22" Style="{StaticResource HeaderTextStyle}" Text="-" />
-                            <TextBlock x:Name="WeekSplitText" Foreground="#BFD0DE" Text="-" />
-                            <ProgressBar x:Name="WeekUploadShareBar" Height="8" Maximum="100" Minimum="0" Value="0" />
-                            <TextBlock x:Name="WeekUploadShareText" Foreground="#9AAEBE" FontSize="12" Text="Upload share -" />
+                            <TextBlock x:Name="WeekSplitText" Foreground="{ThemeResource StatusTextBrush}" Text="-" />
+                            <ProgressBar x:Name="WeekUploadShareBar" Height="8" AutomationProperties.Name="This week upload share" Maximum="100" Minimum="0" Value="0" />
+                            <TextBlock x:Name="WeekUploadShareText" Foreground="{ThemeResource MutedTextBrush}" FontSize="12" Text="Upload share -" />
                         </StackPanel>
                     </Border>
 
-                    <Border Grid.Column="2" Background="#1F2A33" CornerRadius="12" Padding="14">
+                    <Border Grid.Column="2" Background="{ThemeResource SurfaceBrush}" CornerRadius="12" Padding="14">
                         <StackPanel Spacing="4">
-                            <TextBlock x:Name="MonthCardTitleText" Foreground="#B5C5D3" Text="This Month" />
+                            <TextBlock x:Name="MonthCardTitleText" Foreground="{ThemeResource TertiaryTextBrush}" Text="This Month" />
                             <TextBlock x:Name="MonthTotalText" FontSize="22" Style="{StaticResource HeaderTextStyle}" Text="-" />
-                            <TextBlock x:Name="MonthSplitText" Foreground="#BFD0DE" Text="-" />
-                            <ProgressBar x:Name="MonthUploadShareBar" Height="8" Maximum="100" Minimum="0" Value="0" />
-                            <TextBlock x:Name="MonthUploadShareText" Foreground="#9AAEBE" FontSize="12" Text="Upload share -" />
+                            <TextBlock x:Name="MonthSplitText" Foreground="{ThemeResource StatusTextBrush}" Text="-" />
+                            <ProgressBar x:Name="MonthUploadShareBar" Height="8" AutomationProperties.Name="This month upload share" Maximum="100" Minimum="0" Value="0" />
+                            <TextBlock x:Name="MonthUploadShareText" Foreground="{ThemeResource MutedTextBrush}" FontSize="12" Text="Upload share -" />
                         </StackPanel>
                     </Border>
                 </Grid>
 
-                <Border Background="#1F2A33" CornerRadius="12" Padding="16">
+                <Border Background="{ThemeResource SurfaceBrush}" CornerRadius="12" Padding="16">
                     <StackPanel Spacing="10">
                         <TextBlock FontSize="18" Style="{StaticResource HeaderTextStyle}" Text="Daemon Status" />
-                        <TextBlock x:Name="StatusText" Foreground="#E2E9EE" Text="Loading daemon status..." TextWrapping="Wrap" />
-                        <TextBlock x:Name="HelperStatusText" Foreground="#BFC9D2" Text="Helper ingestion status unknown." TextWrapping="Wrap" />
-                        <ProgressBar x:Name="ImportProgressBar" Height="8" Maximum="100" Minimum="0" Value="0" />
+                        <TextBlock x:Name="StatusText" Foreground="{ThemeResource PrimaryTextBrush}" AutomationProperties.LiveSetting="Polite" Text="Loading daemon status..." TextWrapping="Wrap" />
+                        <TextBlock x:Name="HelperStatusText" Foreground="{ThemeResource StatusTextBrush}" AutomationProperties.LiveSetting="Polite" Text="Helper ingestion status unknown." TextWrapping="Wrap" />
+                        <ProgressBar x:Name="ImportProgressBar" Height="8" AutomationProperties.Name="History import progress" Maximum="100" Minimum="0" Value="0" />
                         <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Button Click="OnRefreshClicked" Content="Refresh" Style="{StaticResource PrimaryAction}" />
-                            <Button Click="OnSummaryClicked" Content="Today Summary" />
-                            <Button Click="OnStartHelperClicked" Content="Start Helper Loop" />
-                            <Button Click="OnImportHistoryClicked" Content="Import 60 Days" />
+                            <Button Click="OnRefreshClicked" AutomationProperties.Name="Refresh daemon status" Content="Refresh" Style="{StaticResource PrimaryAction}" />
+                            <Button Click="OnSummaryClicked" AutomationProperties.Name="Show today summary" Content="Today Summary" />
+                            <Button Click="OnStartHelperClicked" AutomationProperties.Name="Start helper loop" Content="Start Helper Loop" />
+                            <Button Click="OnImportHistoryClicked" AutomationProperties.Name="Import 60 days of history" Content="Import 60 Days" />
                         </StackPanel>
                     </StackPanel>
                 </Border>
 
-                <Border Background="#1F2A33" CornerRadius="12" Padding="16">
+                <Border Background="{ThemeResource SurfaceBrush}" CornerRadius="12" Padding="16">
                     <StackPanel Spacing="10">
                         <TextBlock FontSize="18" Style="{StaticResource HeaderTextStyle}" Text="Collector Settings" />
 
@@ -127,74 +122,80 @@
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
-                            <TextBlock Grid.Row="0" VerticalAlignment="Center" Foreground="#B5C5D3" Text="Poll interval (seconds)" />
-                            <NumberBox Grid.Row="0" Grid.Column="1" x:Name="PollIntervalNumberBox" Minimum="15" Maximum="300" SmallChange="15" SpinButtonPlacementMode="Inline" />
-                            <TextBlock Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" Foreground="#9AAEBE" Text="Hot-reloads in daemon; next poll uses this interval." TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="0" VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Poll interval (seconds)" />
+                            <NumberBox Grid.Row="0" Grid.Column="1" x:Name="PollIntervalNumberBox" AutomationProperties.Name="Poll interval seconds" AutomationProperties.HelpText="Hot reloads in the daemon and applies to the next poll." Minimum="15" Maximum="300" SmallChange="15" SpinButtonPlacementMode="Inline" />
+                            <TextBlock Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" Foreground="{ThemeResource MutedTextBrush}" Text="Hot-reloads in daemon; next poll uses this interval." TextWrapping="Wrap" />
 
-                            <TextBlock Grid.Row="1" VerticalAlignment="Center" Foreground="#B5C5D3" Text="Retention (days)" />
-                            <NumberBox Grid.Row="1" Grid.Column="1" x:Name="RetentionDaysNumberBox" Minimum="0" Maximum="3650" SmallChange="30" SpinButtonPlacementMode="Inline" />
-                            <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Foreground="#9AAEBE" Text="0 keeps all local history." TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="1" VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Retention (days)" />
+                            <NumberBox Grid.Row="1" Grid.Column="1" x:Name="RetentionDaysNumberBox" AutomationProperties.Name="Retention days" AutomationProperties.HelpText="Use zero to keep all local history." Minimum="0" Maximum="3650" SmallChange="30" SpinButtonPlacementMode="Inline" />
+                            <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Foreground="{ThemeResource MutedTextBrush}" Text="0 keeps all local history." TextWrapping="Wrap" />
 
-                            <TextBlock Grid.Row="2" VerticalAlignment="Center" Foreground="#B5C5D3" Text="AFK idle threshold (seconds)" />
-                            <NumberBox Grid.Row="2" Grid.Column="1" x:Name="AfkIdleThresholdNumberBox" Minimum="30" Maximum="3600" SmallChange="30" SpinButtonPlacementMode="Inline" />
-                            <TextBlock Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" Foreground="#9AAEBE" Text="Used by upcoming AFK audit pipeline." TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="2" VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="AFK idle threshold (seconds)" />
+                            <NumberBox Grid.Row="2" Grid.Column="1" x:Name="AfkIdleThresholdNumberBox" AutomationProperties.Name="AFK idle threshold seconds" Minimum="30" Maximum="3600" SmallChange="30" SpinButtonPlacementMode="Inline" />
+                            <TextBlock Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" Foreground="{ThemeResource MutedTextBrush}" Text="Used by upcoming AFK audit pipeline." TextWrapping="Wrap" />
 
-                            <TextBlock Grid.Row="3" VerticalAlignment="Center" Foreground="#B5C5D3" Text="Default export granularity" />
-                            <ComboBox Grid.Row="3" Grid.Column="1" x:Name="SettingsExportGranularityComboBox" MinWidth="140" />
-                            <TextBlock Grid.Row="3" Grid.Column="2" VerticalAlignment="Center" Foreground="#9AAEBE" Text="Applied when settings load and after reset defaults." TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="3" VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Default export granularity" />
+                            <ComboBox Grid.Row="3" Grid.Column="1" x:Name="SettingsExportGranularityComboBox" AutomationProperties.Name="Default export granularity" MinWidth="140" />
+                            <TextBlock Grid.Row="3" Grid.Column="2" VerticalAlignment="Center" Foreground="{ThemeResource MutedTextBrush}" Text="Applied when settings load and after reset defaults." TextWrapping="Wrap" />
 
-                            <TextBlock Grid.Row="4" VerticalAlignment="Center" Foreground="#B5C5D3" Text="Default export includes summary" />
-                            <CheckBox Grid.Row="4" Grid.Column="1" x:Name="SettingsIncludeSummaryCheckBox" VerticalAlignment="Center" />
-                            <TextBlock Grid.Row="4" Grid.Column="2" VerticalAlignment="Center" Foreground="#9AAEBE" Text="Controls default Summary buckets checkbox for exports." TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="4" VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Default export includes summary" />
+                            <CheckBox Grid.Row="4" Grid.Column="1" x:Name="SettingsIncludeSummaryCheckBox" AutomationProperties.Name="Default export includes summary" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="4" Grid.Column="2" VerticalAlignment="Center" Foreground="{ThemeResource MutedTextBrush}" Text="Controls default Summary buckets checkbox for exports." TextWrapping="Wrap" />
 
-                            <TextBlock Grid.Row="5" VerticalAlignment="Center" Foreground="#B5C5D3" Text="Default export includes apps" />
-                            <CheckBox Grid.Row="5" Grid.Column="1" x:Name="SettingsIncludeAppsCheckBox" VerticalAlignment="Center" />
-                            <TextBlock Grid.Row="5" Grid.Column="2" VerticalAlignment="Center" Foreground="#9AAEBE" Text="Controls default Apps checkbox for exports." TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="5" VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Default export includes apps" />
+                            <CheckBox Grid.Row="5" Grid.Column="1" x:Name="SettingsIncludeAppsCheckBox" AutomationProperties.Name="Default export includes apps" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="5" Grid.Column="2" VerticalAlignment="Center" Foreground="{ThemeResource MutedTextBrush}" Text="Controls default Apps checkbox for exports." TextWrapping="Wrap" />
 
-                            <TextBlock Grid.Row="6" VerticalAlignment="Center" Foreground="#B5C5D3" Text="Default export includes interfaces" />
-                            <CheckBox Grid.Row="6" Grid.Column="1" x:Name="SettingsIncludeInterfacesCheckBox" VerticalAlignment="Center" />
-                            <TextBlock Grid.Row="6" Grid.Column="2" VerticalAlignment="Center" Foreground="#9AAEBE" Text="Controls default Interfaces checkbox for exports." TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="6" VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Default export includes interfaces" />
+                            <CheckBox Grid.Row="6" Grid.Column="1" x:Name="SettingsIncludeInterfacesCheckBox" AutomationProperties.Name="Default export includes interfaces" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="6" Grid.Column="2" VerticalAlignment="Center" Foreground="{ThemeResource MutedTextBrush}" Text="Controls default Interfaces checkbox for exports." TextWrapping="Wrap" />
                         </Grid>
 
                         <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Button Click="OnApplySettingsClicked" Content="Apply Settings" Style="{StaticResource PrimaryAction}" />
-                            <Button Click="OnResetSettingsClicked" Content="Reset Defaults" />
-                            <TextBlock x:Name="SettingsStatusText" Foreground="#BFD0DE" VerticalAlignment="Center" Text="" TextWrapping="Wrap" />
+                            <Button Click="OnApplySettingsClicked" AutomationProperties.Name="Apply collector settings" Content="Apply Settings" Style="{StaticResource PrimaryAction}" />
+                            <Button Click="OnResetSettingsClicked" AutomationProperties.Name="Reset collector settings to defaults" Content="Reset Defaults" />
+                            <Button x:Name="CompactDatabaseButton" Click="OnCompactDatabaseClicked" AutomationProperties.Name="Compact database" Content="Compact DB" />
+                            <TextBlock x:Name="SettingsStatusText" Foreground="{ThemeResource StatusTextBrush}" AutomationProperties.LiveSetting="Polite" VerticalAlignment="Center" Text="" TextWrapping="Wrap" />
                         </StackPanel>
+
+                        <TextBlock x:Name="DbSizeStatusText" Foreground="{ThemeResource StatusTextBrush}" AutomationProperties.LiveSetting="Polite" Text="Database size: unknown." TextWrapping="Wrap" />
+                        <TextBlock x:Name="RetentionCleanupStatusText" Foreground="{ThemeResource MutedTextBrush}" AutomationProperties.LiveSetting="Polite" Text="Retention cleanup has not run yet." TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
 
-                <Border Background="#1F2A33" CornerRadius="12" Padding="16">
+                <Border Background="{ThemeResource SurfaceBrush}" CornerRadius="12" Padding="16">
                     <StackPanel Spacing="8">
                         <TextBlock FontSize="18" Style="{StaticResource HeaderTextStyle}" Text="Collector Target" />
-                        <TextBlock Foreground="#D4DCE2" Text="Steady-state memory target: under 3 MB (hard ceiling 5 MB)." TextWrapping="Wrap" />
-                        <TextBlock x:Name="MemoryHintText" Foreground="{StaticResource BrandWarningBrush}" Text="Waiting for daemon metrics..." TextWrapping="Wrap" />
+                        <TextBlock Foreground="{ThemeResource SecondaryTextBrush}" Text="Steady-state memory target: under 3 MB (hard ceiling 5 MB)." TextWrapping="Wrap" />
+                        <TextBlock x:Name="MemoryHintText" Foreground="{ThemeResource BrandWarningBrush}" AutomationProperties.LiveSetting="Polite" Text="Waiting for daemon metrics..." TextWrapping="Wrap" />
+                        <TextBlock x:Name="ReliabilityStatusText" Foreground="{ThemeResource MutedTextBrush}" AutomationProperties.LiveSetting="Polite" Text="Reliability metrics unavailable." TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
 
-                <Border Background="#1F2A33" CornerRadius="12" Padding="16">
+                <Border Background="{ThemeResource SurfaceBrush}" CornerRadius="12" Padding="16">
                     <StackPanel Spacing="8">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <TextBlock FontSize="18" Style="{StaticResource HeaderTextStyle}" Text="Top Apps" />
-                            <TextBlock x:Name="TopAppsRangeText" Foreground="#BFD0DE" Text="(last 24h)" />
-                            <TextBlock VerticalAlignment="Center" Foreground="#B5C5D3" Text="Sort" />
-                            <ComboBox x:Name="TopAppsSortComboBox" MinWidth="180" SelectionChanged="OnTopAppsSortChanged" />
-                            <Button Click="OnRefreshAppsClicked" Content="Refresh Apps" />
+                            <TextBlock x:Name="TopAppsRangeText" Foreground="{ThemeResource StatusTextBrush}" Text="(last 24h)" />
+                            <TextBlock VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Sort" />
+                            <ComboBox x:Name="TopAppsSortComboBox" MinWidth="180" AutomationProperties.Name="Top apps sort mode" SelectionChanged="OnTopAppsSortChanged" />
+                            <CheckBox x:Name="AfkOnlyTopAppsCheckBox" Content="AFK only" VerticalAlignment="Center" Checked="OnAfkOnlyFilterChanged" Unchecked="OnAfkOnlyFilterChanged" />
+                            <Button Click="OnRefreshAppsClicked" AutomationProperties.Name="Refresh top apps" Content="Refresh Apps" />
                         </StackPanel>
 
                         <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBlock VerticalAlignment="Center" Foreground="#B5C5D3" Text="Preset" />
-                            <ComboBox x:Name="RangePresetComboBox" MinWidth="180" SelectionChanged="OnRangePresetChanged" />
-                            <TextBlock VerticalAlignment="Center" Foreground="#B5C5D3" Text="From" />
-                            <DatePicker x:Name="StartDatePicker" DateChanged="OnDateRangeChanged" />
-                            <TextBlock VerticalAlignment="Center" Foreground="#B5C5D3" Text="To" />
-                            <DatePicker x:Name="EndDatePicker" DateChanged="OnDateRangeChanged" />
-                            <Button Click="OnApplyRangeClicked" Content="Apply Range" />
+                            <TextBlock VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Preset" />
+                            <ComboBox x:Name="RangePresetComboBox" MinWidth="180" AutomationProperties.Name="Date range preset" SelectionChanged="OnRangePresetChanged" />
+                            <TextBlock VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="From" />
+                            <DatePicker x:Name="StartDatePicker" AutomationProperties.Name="Start date" DateChanged="OnDateRangeChanged" />
+                            <TextBlock VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="To" />
+                            <DatePicker x:Name="EndDatePicker" AutomationProperties.Name="End date" DateChanged="OnDateRangeChanged" />
+                            <Button Click="OnApplyRangeClicked" AutomationProperties.Name="Apply selected date range" Content="Apply Range" />
                         </StackPanel>
 
-                        <TextBlock Foreground="#9AAEBE" FontSize="12" Text="Grouping keeps core OS traffic in System and low-volume apps in Other (&lt; 1 MB each)." TextWrapping="Wrap" />
+                        <TextBlock Foreground="{ThemeResource MutedTextBrush}" FontSize="12" Text="Grouping keeps core OS traffic in System and low-volume apps in Other (&lt; 1 MB each)." TextWrapping="Wrap" />
 
-                        <ListView x:Name="TopAppsList" Height="280" SelectionMode="Single" SelectionChanged="OnTopAppSelectionChanged">
+                        <ListView x:Name="TopAppsList" Height="280" AutomationProperties.Name="Top apps list" SelectionMode="Single" SelectionChanged="OnTopAppSelectionChanged">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
                                     <StackPanel Spacing="4">
@@ -205,12 +206,12 @@
                                                 <ColumnDefinition Width="220" />
                                             </Grid.ColumnDefinitions>
 
-                                            <Border Width="20" Height="20" CornerRadius="10" Background="#243744" VerticalAlignment="Center" HorizontalAlignment="Center">
-                                                <TextBlock Foreground="{Binding IconForeground}" HorizontalAlignment="Center" VerticalAlignment="Center" Text="{Binding IconGlyph}" FontFamily="Segoe MDL2 Assets" FontSize="12" />
+                                            <Border Width="20" Height="20" CornerRadius="10" AutomationProperties.AccessibilityView="Raw" Background="{ThemeResource IconSurfaceBrush}" VerticalAlignment="Center" HorizontalAlignment="Center">
+                                                <TextBlock Foreground="{Binding IconForeground}" AutomationProperties.AccessibilityView="Raw" HorizontalAlignment="Center" VerticalAlignment="Center" Text="{Binding IconGlyph}" FontFamily="Segoe MDL2 Assets" FontSize="12" />
                                             </Border>
 
-                                            <TextBlock Grid.Column="1" Foreground="#E6EDF3" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Grid.Column="2" Foreground="#BFD0DE" HorizontalAlignment="Right" Text="{Binding UsageText}" />
+                                            <TextBlock Grid.Column="1" Foreground="{ThemeResource PrimaryTextBrush}" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="2" Foreground="{ThemeResource StatusTextBrush}" HorizontalAlignment="Right" Text="{Binding UsageText}" />
                                         </Grid>
 
                                         <Grid ColumnSpacing="10">
@@ -218,11 +219,11 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="220" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Foreground="#9AAEBE" FontSize="12" Text="{Binding ProcessText}" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Grid.Column="1" Foreground="#9AAEBE" FontSize="12" HorizontalAlignment="Right" Text="{Binding LastSeenText}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Foreground="{ThemeResource MutedTextBrush}" FontSize="12" Text="{Binding ProcessText}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Foreground="{ThemeResource MutedTextBrush}" FontSize="12" HorizontalAlignment="Right" Text="{Binding LastSeenText}" TextTrimming="CharacterEllipsis" />
                                         </Grid>
 
-                                        <TextBlock Foreground="#8FA4B4" FontSize="12" Text="{Binding TransferSplitText}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Foreground="{ThemeResource MutedTextBrush}" FontSize="12" Text="{Binding TransferSplitText}" TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
@@ -230,7 +231,71 @@
                     </StackPanel>
                 </Border>
 
-                <Border Background="#1F2A33" CornerRadius="12" Padding="16">
+                <Border Background="{ThemeResource SurfaceBrush}" CornerRadius="12" Padding="16">
+                    <StackPanel Spacing="8">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock FontSize="18" Style="{StaticResource HeaderTextStyle}" Text="AFK Timeline" />
+                            <TextBlock x:Name="AfkTimelineRangeText" Foreground="{ThemeResource StatusTextBrush}" Text="(selected range)" />
+                            <Button x:Name="RefreshAfkTimelineButton" Click="OnRefreshAfkTimelineClicked" AutomationProperties.Name="Refresh AFK timeline" Content="Refresh AFK" />
+                        </StackPanel>
+
+                        <TextBlock x:Name="AfkTimelineStatusText" Foreground="{ThemeResource MutedTextBrush}" AutomationProperties.LiveSetting="Polite" Text="No AFK windows in selected range." TextWrapping="Wrap" />
+
+                        <ListView x:Name="AfkTimelineList" Height="200" AutomationProperties.Name="AFK timeline list" SelectionMode="Single" SelectionChanged="OnAfkTimelineSelectionChanged">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Spacing="4">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="140" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Foreground="{ThemeResource PrimaryTextBrush}" Text="{Binding WindowText}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Foreground="{ThemeResource StatusTextBrush}" HorizontalAlignment="Right" Text="{Binding UsageText}" />
+                                        </Grid>
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="140" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Foreground="{ThemeResource MutedTextBrush}" FontSize="12" Text="{Binding TopAppsPreviewText}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Foreground="{ThemeResource MutedTextBrush}" FontSize="12" HorizontalAlignment="Right" Text="{Binding DurationText}" />
+                                        </Grid>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+
+                        <TextBlock FontSize="16" Style="{StaticResource HeaderTextStyle}" Text="Selected AFK Window Top Apps" />
+
+                        <ListView x:Name="AfkWindowAppsList" Height="180" AutomationProperties.Name="Selected AFK window top apps" SelectionMode="None" IsItemClickEnabled="False">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Spacing="4">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="140" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Foreground="{ThemeResource PrimaryTextBrush}" Text="{Binding AppText}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Foreground="{ThemeResource StatusTextBrush}" HorizontalAlignment="Right" Text="{Binding UsageText}" />
+                                        </Grid>
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="140" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Foreground="{ThemeResource MutedTextBrush}" FontSize="12" Text="{Binding SplitText}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Foreground="{ThemeResource MutedTextBrush}" FontSize="12" HorizontalAlignment="Right" Text="{Binding LastSeenText}" />
+                                        </Grid>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </StackPanel>
+                </Border>
+
+                <Border Background="{ThemeResource SurfaceBrush}" CornerRadius="12" Padding="16">
                     <StackPanel Spacing="10">
                         <TextBlock FontSize="18" Style="{StaticResource HeaderTextStyle}" Text="Monthly Caps" />
 
@@ -247,23 +312,23 @@
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
-                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Foreground="#B5C5D3" Text="Scope" />
-                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Foreground="#B5C5D3" Text="Interface" />
-                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Foreground="#B5C5D3" Text="Monthly cap (GB)" />
-                            <TextBlock Grid.Column="3" VerticalAlignment="Center" Foreground="#B5C5D3" Text="Active" />
+                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Scope" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Interface" />
+                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Monthly cap (GB)" />
+                            <TextBlock Grid.Column="3" VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Active" />
 
-                            <ComboBox Grid.Row="1" Grid.Column="0" x:Name="CapScopeComboBox" SelectionChanged="OnCapScopeChanged" MinWidth="180" />
-                            <ComboBox Grid.Row="1" Grid.Column="1" x:Name="CapInterfaceComboBox" MinWidth="200" />
-                            <NumberBox Grid.Row="1" Grid.Column="2" x:Name="CapMonthlyGbNumberBox" Minimum="1" Maximum="1048576" SmallChange="1" SpinButtonPlacementMode="Inline" />
-                            <ToggleSwitch Grid.Row="1" Grid.Column="3" x:Name="CapActiveToggle" OnContent="On" OffContent="Off" />
+                            <ComboBox Grid.Row="1" Grid.Column="0" x:Name="CapScopeComboBox" AutomationProperties.Name="Cap scope" SelectionChanged="OnCapScopeChanged" MinWidth="180" />
+                            <ComboBox Grid.Row="1" Grid.Column="1" x:Name="CapInterfaceComboBox" AutomationProperties.Name="Cap interface" MinWidth="200" />
+                            <NumberBox Grid.Row="1" Grid.Column="2" x:Name="CapMonthlyGbNumberBox" AutomationProperties.Name="Monthly cap in gigabytes" Minimum="1" Maximum="1048576" SmallChange="1" SpinButtonPlacementMode="Inline" />
+                            <ToggleSwitch Grid.Row="1" Grid.Column="3" x:Name="CapActiveToggle" AutomationProperties.Name="Cap active" OnContent="On" OffContent="Off" />
 
                             <StackPanel Grid.Row="1" Grid.Column="4" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                <Button x:Name="SaveCapButton" Click="OnSaveCapClicked" Content="Save / Update" Style="{StaticResource PrimaryAction}" />
-                                <Button x:Name="DeleteCapButton" Click="OnDeleteCapClicked" Content="Delete Selected" />
+                                <Button x:Name="SaveCapButton" Click="OnSaveCapClicked" AutomationProperties.Name="Save or update selected cap" Content="Save / Update" Style="{StaticResource PrimaryAction}" />
+                                <Button x:Name="DeleteCapButton" Click="OnDeleteCapClicked" AutomationProperties.Name="Delete selected cap" Content="Delete Selected" />
                             </StackPanel>
                         </Grid>
 
-                        <ListView x:Name="CapDefinitionsList" Height="180" SelectionMode="Single" SelectionChanged="OnCapSelectionChanged">
+                        <ListView x:Name="CapDefinitionsList" Height="180" AutomationProperties.Name="Monthly cap definitions" SelectionMode="Single" SelectionChanged="OnCapSelectionChanged">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
                                     <Grid ColumnSpacing="10">
@@ -272,29 +337,29 @@
                                             <ColumnDefinition Width="180" />
                                             <ColumnDefinition Width="120" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Foreground="#E6EDF3" Text="{Binding ScopeText}" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Grid.Column="1" Foreground="#BFD0DE" HorizontalAlignment="Right" Text="{Binding CapText}" />
-                                        <TextBlock Grid.Column="2" Foreground="#9AAEBE" HorizontalAlignment="Right" Text="{Binding ActiveText}" />
+                                        <TextBlock Foreground="{ThemeResource PrimaryTextBrush}" Text="{Binding ScopeText}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="1" Foreground="{ThemeResource StatusTextBrush}" HorizontalAlignment="Right" Text="{Binding CapText}" />
+                                        <TextBlock Grid.Column="2" Foreground="{ThemeResource MutedTextBrush}" HorizontalAlignment="Right" Text="{Binding ActiveText}" />
                                     </Grid>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>
 
-                        <TextBlock x:Name="CapStatusText" Foreground="#BFD0DE" Text="Create a global or per-interface monthly cap." TextWrapping="Wrap" />
+                        <TextBlock x:Name="CapStatusText" Foreground="{ThemeResource StatusTextBrush}" AutomationProperties.LiveSetting="Polite" Text="Create a global or per-interface monthly cap." TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
 
-                <Border Background="#1F2A33" CornerRadius="12" Padding="16">
+                <Border Background="{ThemeResource SurfaceBrush}" CornerRadius="12" Padding="16">
                     <StackPanel Spacing="8">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <TextBlock FontSize="18" Style="{StaticResource HeaderTextStyle}" Text="Alerts History" />
-                            <TextBlock x:Name="AlertsHistoryRangeText" Foreground="#BFD0DE" Text="(selected range)" />
-                            <Button x:Name="RefreshAlertsHistoryButton" Click="OnRefreshAlertsHistoryClicked" Content="Refresh Alerts" />
+                            <TextBlock x:Name="AlertsHistoryRangeText" Foreground="{ThemeResource StatusTextBrush}" Text="(selected range)" />
+                            <Button x:Name="RefreshAlertsHistoryButton" Click="OnRefreshAlertsHistoryClicked" AutomationProperties.Name="Refresh alerts history" Content="Refresh Alerts" />
                         </StackPanel>
 
-                        <TextBlock x:Name="AlertsHistoryStatusText" Foreground="#9AAEBE" Text="No alerts in selected range." TextWrapping="Wrap" />
+                        <TextBlock x:Name="AlertsHistoryStatusText" Foreground="{ThemeResource MutedTextBrush}" AutomationProperties.LiveSetting="Polite" Text="No alerts in selected range." TextWrapping="Wrap" />
 
-                        <ListView x:Name="AlertsHistoryList" Height="220" SelectionMode="None" IsItemClickEnabled="False" IsTabStop="False">
+                        <ListView x:Name="AlertsHistoryList" Height="220" AutomationProperties.Name="Alerts history list" SelectionMode="None" IsItemClickEnabled="False">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
                                     <StackPanel Spacing="4">
@@ -303,8 +368,8 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="170" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Foreground="#E6EDF3" Text="{Binding TitleText}" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Grid.Column="1" Foreground="#BFD0DE" HorizontalAlignment="Right" Text="{Binding FiredAtText}" />
+                                            <TextBlock Foreground="{ThemeResource PrimaryTextBrush}" Text="{Binding TitleText}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Foreground="{ThemeResource StatusTextBrush}" HorizontalAlignment="Right" Text="{Binding FiredAtText}" />
                                         </Grid>
 
                                         <Grid ColumnSpacing="10">
@@ -312,11 +377,11 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="170" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Foreground="#9AAEBE" FontSize="12" Text="{Binding ScopeText}" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Grid.Column="1" Foreground="#9AAEBE" FontSize="12" HorizontalAlignment="Right" Text="{Binding UsageText}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Foreground="{ThemeResource MutedTextBrush}" FontSize="12" Text="{Binding ScopeText}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Foreground="{ThemeResource MutedTextBrush}" FontSize="12" HorizontalAlignment="Right" Text="{Binding UsageText}" TextTrimming="CharacterEllipsis" />
                                         </Grid>
 
-                                        <TextBlock Foreground="#8FA4B4" FontSize="12" Text="{Binding WindowText}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Foreground="{ThemeResource MutedTextBrush}" FontSize="12" Text="{Binding WindowText}" TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
@@ -324,22 +389,22 @@
                     </StackPanel>
                 </Border>
 
-                <Border Background="#1F2A33" CornerRadius="12" Padding="16">
+                <Border Background="{ThemeResource SurfaceBrush}" CornerRadius="12" Padding="16">
                     <StackPanel Spacing="8">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <TextBlock FontSize="18" Style="{StaticResource HeaderTextStyle}" Text="App Detail" />
-                            <TextBlock x:Name="AppDetailTitleText" Foreground="#BFD0DE" Text="Select an app from the list" TextTrimming="CharacterEllipsis" />
-                            <TextBlock VerticalAlignment="Center" Foreground="#B5C5D3" Text="Granularity" />
-                            <ComboBox x:Name="AppDetailGranularityComboBox" MinWidth="120" SelectionChanged="OnAppDetailGranularityChanged" />
-                            <Button Click="OnRefreshAppDetailClicked" Content="Refresh Detail" />
+                            <TextBlock x:Name="AppDetailTitleText" Foreground="{ThemeResource StatusTextBrush}" Text="Select an app from the list" TextTrimming="CharacterEllipsis" />
+                            <TextBlock VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Granularity" />
+                            <ComboBox x:Name="AppDetailGranularityComboBox" MinWidth="120" AutomationProperties.Name="App detail granularity" SelectionChanged="OnAppDetailGranularityChanged" />
+                            <Button Click="OnRefreshAppDetailClicked" AutomationProperties.Name="Refresh app detail" Content="Refresh Detail" />
                         </StackPanel>
 
-                        <TextBlock x:Name="AppDetailSummaryText" Foreground="#D4DCE2" Text="Pick an app to view time series buckets." TextWrapping="Wrap" />
+                        <TextBlock x:Name="AppDetailSummaryText" Foreground="{ThemeResource SecondaryTextBrush}" AutomationProperties.LiveSetting="Polite" Text="Pick an app to view time series buckets." TextWrapping="Wrap" />
 
                         <TextBlock FontSize="16" Style="{StaticResource HeaderTextStyle}" Text="Time-Series Chart" />
-                        <TextBlock x:Name="AppDetailChartStatusText" Foreground="#9AAEBE" Text="No chart data for the selected app and range." TextWrapping="Wrap" Visibility="Collapsed" />
+                        <TextBlock x:Name="AppDetailChartStatusText" Foreground="{ThemeResource MutedTextBrush}" AutomationProperties.LiveSetting="Polite" Text="No chart data for the selected app and range." TextWrapping="Wrap" Visibility="Collapsed" />
 
-                        <ListView x:Name="AppDetailChartList" Height="220" SelectionMode="None" IsItemClickEnabled="False" IsTabStop="False">
+                        <ListView x:Name="AppDetailChartList" Height="220" AutomationProperties.Name="App detail time series chart" SelectionMode="None" IsItemClickEnabled="False">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
                                     <StackPanel Spacing="4">
@@ -348,8 +413,8 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="150" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Foreground="#E6EDF3" Text="{Binding BucketLabel}" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Grid.Column="1" Foreground="#BFD0DE" HorizontalAlignment="Right" Text="{Binding UsageText}" />
+                                            <TextBlock Foreground="{ThemeResource PrimaryTextBrush}" Text="{Binding BucketLabel}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Foreground="{ThemeResource StatusTextBrush}" HorizontalAlignment="Right" Text="{Binding UsageText}" />
                                         </Grid>
 
                                         <ProgressBar Height="8" Maximum="100" Minimum="0" Value="{Binding RelativePercent}" />
@@ -359,8 +424,8 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="150" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Foreground="#9AAEBE" FontSize="12" Text="{Binding SplitText}" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Grid.Column="1" Foreground="#9AAEBE" FontSize="12" HorizontalAlignment="Right" Text="{Binding RelativeText}" />
+                                            <TextBlock Foreground="{ThemeResource MutedTextBrush}" FontSize="12" Text="{Binding SplitText}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Foreground="{ThemeResource MutedTextBrush}" FontSize="12" HorizontalAlignment="Right" Text="{Binding RelativeText}" />
                                         </Grid>
                                     </StackPanel>
                                 </DataTemplate>
@@ -369,7 +434,7 @@
 
                         <TextBlock FontSize="16" Style="{StaticResource HeaderTextStyle}" Text="Bucket Table" />
 
-                        <ListView x:Name="AppDetailBucketsList" Height="220" SelectionMode="None">
+                        <ListView x:Name="AppDetailBucketsList" Height="220" AutomationProperties.Name="App detail bucket table" SelectionMode="None">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
                                     <Grid ColumnSpacing="10">
@@ -378,9 +443,9 @@
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="180" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Foreground="#E6EDF3" Text="{Binding BucketLabel}" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Grid.Column="1" Foreground="#9AAEBE" Text="{Binding SplitText}" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Grid.Column="2" Foreground="#BFD0DE" HorizontalAlignment="Right" Text="{Binding UsageText}" />
+                                        <TextBlock Foreground="{ThemeResource PrimaryTextBrush}" Text="{Binding BucketLabel}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="1" Foreground="{ThemeResource MutedTextBrush}" Text="{Binding SplitText}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="2" Foreground="{ThemeResource StatusTextBrush}" HorizontalAlignment="Right" Text="{Binding UsageText}" />
                                     </Grid>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
@@ -388,15 +453,15 @@
                     </StackPanel>
                 </Border>
 
-                <Border Background="#1F2A33" CornerRadius="12" Padding="16">
+                <Border Background="{ThemeResource SurfaceBrush}" CornerRadius="12" Padding="16">
                     <StackPanel Spacing="8">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <TextBlock FontSize="18" Style="{StaticResource HeaderTextStyle}" Text="Interface Breakdown" />
-                            <TextBlock x:Name="InterfaceBreakdownRangeText" Foreground="#BFD0DE" Text="(selected range)" />
-                            <Button Click="OnRefreshInterfaceBreakdownClicked" Content="Refresh Interfaces" />
+                            <TextBlock x:Name="InterfaceBreakdownRangeText" Foreground="{ThemeResource StatusTextBrush}" Text="(selected range)" />
+                            <Button Click="OnRefreshInterfaceBreakdownClicked" AutomationProperties.Name="Refresh interface breakdown" Content="Refresh Interfaces" />
                         </StackPanel>
 
-                        <ListView x:Name="InterfaceBreakdownList" Height="220" SelectionMode="None">
+                        <ListView x:Name="InterfaceBreakdownList" Height="220" AutomationProperties.Name="Interface breakdown list" SelectionMode="None">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
                                     <Grid ColumnSpacing="10">
@@ -404,17 +469,17 @@
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="180" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Foreground="#E6EDF3" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Grid.Column="1" Foreground="#BFD0DE" HorizontalAlignment="Right" Text="{Binding UsageText}" />
+                                        <TextBlock Foreground="{ThemeResource PrimaryTextBrush}" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="1" Foreground="{ThemeResource StatusTextBrush}" HorizontalAlignment="Right" Text="{Binding UsageText}" />
                                     </Grid>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>
 
                         <TextBlock FontSize="16" Style="{StaticResource HeaderTextStyle}" Text="Usage Share Chart" />
-                        <TextBlock x:Name="InterfaceBreakdownChartStatusText" Foreground="#9AAEBE" Text="No interface chart data in this range." TextWrapping="Wrap" Visibility="Collapsed" />
+                        <TextBlock x:Name="InterfaceBreakdownChartStatusText" Foreground="{ThemeResource MutedTextBrush}" AutomationProperties.LiveSetting="Polite" Text="No interface chart data in this range." TextWrapping="Wrap" Visibility="Collapsed" />
 
-                        <ListView x:Name="InterfaceBreakdownChartList" Height="220" SelectionMode="None" IsItemClickEnabled="False" IsTabStop="False">
+                        <ListView x:Name="InterfaceBreakdownChartList" Height="220" AutomationProperties.Name="Interface usage share chart" SelectionMode="None" IsItemClickEnabled="False">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
                                     <StackPanel Spacing="4">
@@ -423,8 +488,8 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="120" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Foreground="#E6EDF3" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Grid.Column="1" Foreground="#BFD0DE" HorizontalAlignment="Right" Text="{Binding TotalText}" />
+                                            <TextBlock Foreground="{ThemeResource PrimaryTextBrush}" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Foreground="{ThemeResource StatusTextBrush}" HorizontalAlignment="Right" Text="{Binding TotalText}" />
                                         </Grid>
 
                                         <ProgressBar Height="8" Maximum="100" Minimum="0" Value="{Binding SharePercent}" />
@@ -434,8 +499,8 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="120" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Foreground="#9AAEBE" FontSize="12" Text="{Binding SplitText}" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Grid.Column="1" Foreground="#9AAEBE" FontSize="12" HorizontalAlignment="Right" Text="{Binding ShareText}" />
+                                            <TextBlock Foreground="{ThemeResource MutedTextBrush}" FontSize="12" Text="{Binding SplitText}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Foreground="{ThemeResource MutedTextBrush}" FontSize="12" HorizontalAlignment="Right" Text="{Binding ShareText}" />
                                         </Grid>
                                     </StackPanel>
                                 </DataTemplate>

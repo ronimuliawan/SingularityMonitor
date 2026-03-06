@@ -18,6 +18,8 @@ pub const METHOD_LIST_CAP_DEFINITIONS: &str = "LIST_CAP_DEFINITIONS";
 pub const METHOD_UPSERT_CAP_DEFINITION: &str = "UPSERT_CAP_DEFINITION";
 pub const METHOD_DELETE_CAP_DEFINITION: &str = "DELETE_CAP_DEFINITION";
 pub const METHOD_LIST_CAP_ALERT_EVENTS: &str = "LIST_CAP_ALERT_EVENTS";
+pub const METHOD_MARK_CAP_ALERT_EVENTS_DELIVERED: &str = "MARK_CAP_ALERT_EVENTS_DELIVERED";
+pub const METHOD_COMPACT_DATABASE: &str = "COMPACT_DATABASE";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -239,6 +241,7 @@ pub struct ListCapAlertEventsRequest {
     pub interface_guid: Option<String>,
     pub window_kind: Option<String>,
     pub threshold_kind: Option<String>,
+    pub delivery_state: Option<String>,
     pub limit: Option<u32>,
 }
 
@@ -266,6 +269,27 @@ pub struct ListCapAlertEventsResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarkCapAlertEventsDeliveredRequest {
+    pub event_ids: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarkCapAlertEventsDeliveredResponse {
+    pub updated: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactDatabaseRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactDatabaseResponse {
+    pub before_bytes: u64,
+    pub after_bytes: u64,
+    pub reclaimed_bytes: u64,
+    pub duration_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonStatusResponse {
     pub version: String,
     pub uptime_seconds: u64,
@@ -279,6 +303,21 @@ pub struct DaemonStatusResponse {
     pub import_progress_pct: u8,
     pub attribution_mode: String,
     pub last_helper_ingest_ts: i64,
+    pub retention_cleanup_last_run_ts: i64,
+    pub retention_cleanup_cutoff_ts: i64,
+    pub retention_cleanup_deleted_usage_records: u64,
+    pub retention_cleanup_deleted_afk_windows: u64,
+    pub retention_cleanup_last_result: String,
+    pub daemon_start_count: u64,
+    pub daemon_clean_exit_count: u64,
+    pub daemon_unexpected_exit_count: u64,
+    pub daemon_last_start_ts: i64,
+    pub daemon_last_exit_ts: i64,
+    pub daemon_last_error_ts: i64,
+    pub daemon_last_error_stage: String,
+    pub daemon_last_error_message: String,
+    pub poll_error_count: u64,
+    pub ipc_error_count: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -319,6 +358,13 @@ pub struct AfkWindowUsage {
     pub bytes_sent: u64,
     pub bytes_recv: u64,
     pub top_apps: Vec<AppUsageRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetAfkAuditRequest {
+    pub start_ts: Option<i64>,
+    pub end_ts: Option<i64>,
+    pub limit: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

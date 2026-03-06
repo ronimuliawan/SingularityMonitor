@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Windowing;
 using SingularityMonitor.Viewer.Services;
@@ -10,6 +11,7 @@ namespace SingularityMonitor.Viewer
     /// </summary>
     public partial class App : Application
     {
+        private static readonly string ReliabilityLogPath = ResolveReliabilityLogPath();
         private Window? window;
         private AppWindow? appWindow;
         private TrayIconController? trayIconController;
@@ -24,6 +26,10 @@ namespace SingularityMonitor.Viewer
         {
             this.InitializeComponent();
             AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
+            AppDomain.CurrentDomain.UnhandledException += OnCurrentDomainUnhandledException;
+            TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
+            UnhandledException += OnApplicationUnhandledException;
+            AppendReliabilityEvent("start", "app_ctor", "Viewer process initialized.");
         }
 
         /// <summary>
@@ -51,6 +57,7 @@ namespace SingularityMonitor.Viewer
                 openDashboard: ActivateMainWindow,
                 exitApplication: ExitApplication);
             trayIconController.Start();
+            AppendReliabilityEvent("launch", "on_launched", "Viewer window launched.");
         }
 
         /// <summary>
@@ -60,7 +67,9 @@ namespace SingularityMonitor.Viewer
         /// <param name="e">Details about the navigation failure</param>
         void OnNavigationFailed(object sender, NavigationFailedEventArgs e)
         {
-            throw new Exception("Failed to load Page " + e.SourcePageType.FullName);
+            var pageName = e.SourcePageType.FullName ?? e.SourcePageType.Name;
+            AppendReliabilityEvent("error", "navigation_failed", pageName);
+            throw new Exception("Failed to load Page " + pageName);
         }
 
         private void ActivateMainWindow()
@@ -89,7 +98,24 @@ namespace SingularityMonitor.Viewer
 
         private void OnProcessExit(object? sender, EventArgs e)
         {
+            AppendReliabilityEvent("clean_exit", "process_exit", "Viewer process exiting.");
             DisposeTrayIcon();
+        }
+
+        private void OnApplicationUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
+        {
+            AppendReliabilityEvent("crash", "xaml_unhandled", e.Exception?.ToString() ?? e.Message);
+        }
+
+        private void OnCurrentDomainUnhandledException(object? sender, System.UnhandledExceptionEventArgs e)
+        {
+            AppendReliabilityEvent("crash", "appdomain_unhandled", e.ExceptionObject?.ToString() ?? "Unhandled exception");
+        }
+
+        private void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
+        {
+            AppendReliabilityEvent("crash", "task_unobserved", e.Exception.ToString());
+            e.SetObserved();
         }
 
         private void DisposeTrayIcon()
@@ -116,6 +142,39 @@ namespace SingularityMonitor.Viewer
         {
             appWindow?.Show();
             window?.Activate();
+        }
+
+        private static void AppendReliabilityEvent(string kind, string stage, string message)
+        {
+            try
+            {
+                var directory = Path.GetDirectoryName(ReliabilityLogPath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
+                var payload = new
+                {
+                    ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    kind,
+                    stage,
+                    message,
+                };
+                File.AppendAllText(
+                    ReliabilityLogPath,
+                    JsonSerializer.Serialize(payload) + Environment.NewLine);
+            }
+            catch
+            {
+                // Best effort only.
+            }
+        }
+
+        private static string ResolveReliabilityLogPath()
+        {
+            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            return Path.Combine(localAppData, "SingularityMonitor", "viewer-reliability.jsonl");
         }
     }
 }

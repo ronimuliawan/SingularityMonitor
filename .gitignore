@@ -6,6 +6,9 @@
 
 /viewer/bin/
 /viewer/obj/
+/viewer/AppPackages/
+/packaging/winget/generated/
+/temp/
 
 *.pdb
 *.log

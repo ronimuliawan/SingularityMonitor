@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Dispatching;
@@ -10,6 +12,9 @@ namespace SingularityMonitor.Viewer.Services;
 public sealed class TrayIconController : IDisposable
 {
     private const int NotifyIconTextLimit = 63;
+    private const int BalloonTipTextLimit = 255;
+    private const int BalloonTipTitleLimit = 63;
+    private const int AlertPollLimit = 20;
     private static readonly TimeSpan TooltipRefreshInterval = TimeSpan.FromSeconds(60);
 
     private readonly DispatcherQueue dispatcherQueue;
@@ -17,6 +22,7 @@ public sealed class TrayIconController : IDisposable
     private readonly Action exitApplication;
     private readonly DaemonClient daemonClient = new();
     private readonly SemaphoreSlim refreshGate = new(1, 1);
+    private readonly SemaphoreSlim alertGate = new(1, 1);
 
     private readonly Forms.NotifyIcon notifyIcon;
     private readonly Forms.ContextMenuStrip contextMenu;
@@ -56,6 +62,7 @@ public sealed class TrayIconController : IDisposable
 
         refreshLoopCts = new CancellationTokenSource();
         _ = RefreshTooltipAsync(refreshLoopCts.Token);
+        _ = PollAlertNotificationsAsync(refreshLoopCts.Token);
         refreshLoopTask = RunRefreshLoopAsync(refreshLoopCts.Token);
     }
 
@@ -114,6 +121,7 @@ public sealed class TrayIconController : IDisposable
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
                 await RefreshTooltipAsync(cancellationToken);
+                await PollAlertNotificationsAsync(cancellationToken);
             }
         }
         catch (OperationCanceledException)
@@ -160,6 +168,143 @@ public sealed class TrayIconController : IDisposable
         {
             refreshGate.Release();
         }
+    }
+
+    private async Task PollAlertNotificationsAsync(CancellationToken cancellationToken)
+    {
+        if (disposed)
+        {
+            return;
+        }
+
+        if (!await alertGate.WaitAsync(0, cancellationToken))
+        {
+            return;
+        }
+
+        try
+        {
+            CapAlertEventsResponse pending;
+            try
+            {
+                pending = await daemonClient.ListCapAlertEventsAsync(
+                    deliveryState: "new",
+                    limit: AlertPollLimit,
+                    cancellationToken: cancellationToken);
+            }
+            catch
+            {
+                return;
+            }
+
+            if (pending.Events.Length == 0)
+            {
+                return;
+            }
+
+            var deliveredIds = new List<long>(pending.Events.Length);
+            foreach (var alert in pending.Events.OrderBy(evt => evt.FiredAt).ThenBy(evt => evt.Id))
+            {
+                if (await ShowAlertBalloonAsync(alert, cancellationToken))
+                {
+                    deliveredIds.Add(alert.Id);
+                }
+            }
+
+            if (deliveredIds.Count == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                await daemonClient.MarkCapAlertEventsDeliveredAsync(
+                    deliveredIds.ToArray(),
+                    cancellationToken);
+            }
+            catch
+            {
+                // Best effort; undelivered rows are retried next cycle.
+            }
+        }
+        finally
+        {
+            alertGate.Release();
+        }
+    }
+
+    private Task<bool> ShowAlertBalloonAsync(CapAlertEvent alert, CancellationToken cancellationToken)
+    {
+        if (disposed || cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromResult(false);
+        }
+
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var queued = dispatcherQueue.TryEnqueue(() =>
+        {
+            if (disposed)
+            {
+                completion.TrySetResult(false);
+                return;
+            }
+
+            try
+            {
+                notifyIcon.BalloonTipTitle = ClampBalloonText(BuildAlertTitle(alert), BalloonTipTitleLimit);
+                notifyIcon.BalloonTipText = ClampBalloonText(BuildAlertText(alert), BalloonTipTextLimit);
+                notifyIcon.BalloonTipIcon = Forms.ToolTipIcon.Warning;
+                notifyIcon.ShowBalloonTip(5000);
+                completion.TrySetResult(true);
+            }
+            catch
+            {
+                completion.TrySetResult(false);
+            }
+        });
+
+        if (!queued)
+        {
+            completion.TrySetResult(false);
+        }
+
+        return completion.Task;
+    }
+
+    private static string BuildAlertTitle(CapAlertEvent alert)
+    {
+        return alert.ThresholdKind.Trim().ToLowerInvariant() switch
+        {
+            "pct_50" => "Data Cap Alert - 50%",
+            "pct_80" => "Data Cap Alert - 80%",
+            "pct_95" => "Data Cap Alert - 95%",
+            "daily_cap" => "Data Cap Alert - Daily",
+            _ => "Data Cap Alert",
+        };
+    }
+
+    private static string BuildAlertText(CapAlertEvent alert)
+    {
+        var scope = alert.Scope.Trim().Equals("interface", StringComparison.OrdinalIgnoreCase)
+            ? $"interface {alert.InterfaceGuid ?? "(unknown)"}"
+            : "global";
+        var usage = FormatBytesCompact(alert.UsageBytes);
+        var cap = FormatBytesCompact(alert.CapBytes);
+        var firedAt = alert.FiredAt > 0
+            ? DateTimeOffset.FromUnixTimeSeconds(alert.FiredAt).ToLocalTime().ToString("g")
+            : "unknown time";
+        return $"Scope {scope}: {usage} of {cap}. Fired {firedAt}.";
+    }
+
+    private static string ClampBalloonText(string value, int maxLength)
+    {
+        var text = value.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        if (text.Length <= maxLength)
+        {
+            return text;
+        }
+
+        return text[..maxLength];
     }
 
     private static string BuildSummaryTooltip(UsageSummary summary)

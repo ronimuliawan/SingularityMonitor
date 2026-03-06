@@ -1,0 +1,174 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "MSIX package version (for example 1.0.0.0)"
+        required: true
+        default: "1.0.0.0"
+      runtime_identifier:
+        description: "Target runtime identifier"
+        required: true
+        type: choice
+        default: win-x64
+        options:
+          - win-x64
+          - win-arm64
+          - win-x86
+      installer_url:
+        description: "Optional installer URL override for winget manifests"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: windows-latest
+    env:
+      MSIX_CERT_BASE64: ${{ secrets.MSIX_CERT_BASE64 }}
+      MSIX_CERT_PASSWORD: ${{ secrets.MSIX_CERT_PASSWORD }}
+      MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+      MSIX_TIMESTAMP_URL: ${{ secrets.MSIX_TIMESTAMP_URL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Resolve release inputs
+        id: inputs
+        shell: pwsh
+        run: |
+          $version = "${{ github.event.inputs.version }}"
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            $version = "${{ github.ref_name }}".TrimStart("v")
+          }
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "Unable to determine release version."
+          }
+
+          $rid = "${{ github.event.inputs.runtime_identifier }}"
+          if ([string]::IsNullOrWhiteSpace($rid)) {
+            $rid = "win-x64"
+          }
+
+          $publisher = $env:MSIX_PUBLISHER
+          if ([string]::IsNullOrWhiteSpace($publisher)) {
+            $publisher = "CN=SingularityMonitor"
+          }
+
+          $canSign = -not [string]::IsNullOrWhiteSpace($env:MSIX_CERT_BASE64) -and -not [string]::IsNullOrWhiteSpace($env:MSIX_CERT_PASSWORD)
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "rid=$rid" >> $env:GITHUB_OUTPUT
+          "publisher=$publisher" >> $env:GITHUB_OUTPUT
+          "can_sign=$($canSign.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: Build MSIX package
+        id: package
+        shell: pwsh
+        run: |
+          $metadataPath = Join-Path $PWD "release-msix-metadata.json"
+          $args = @(
+            "-ExecutionPolicy", "Bypass",
+            "-File", "scripts/release-msix.ps1",
+            "-BundleHelperRelease",
+            "-RuntimeIdentifier", "${{ steps.inputs.outputs.rid }}",
+            "-Version", "${{ steps.inputs.outputs.version }}",
+            "-Publisher", "${{ steps.inputs.outputs.publisher }}",
+            "-PackageDir", "viewer\AppPackages\Release",
+            "-OutputMetadataPath", $metadataPath
+          )
+
+          if ("${{ steps.inputs.outputs.can_sign }}" -eq "true") {
+            $args += @(
+              "-Sign",
+              "-CertificateBase64", $env:MSIX_CERT_BASE64,
+              "-CertificatePassword", $env:MSIX_CERT_PASSWORD
+            )
+            if (-not [string]::IsNullOrWhiteSpace($env:MSIX_TIMESTAMP_URL)) {
+              $args += @("-TimestampUrl", $env:MSIX_TIMESTAMP_URL)
+            }
+          }
+
+          & powershell @args
+          $metadata = Get-Content $metadataPath | ConvertFrom-Json
+          "msix_path=$($metadata.MsixPath)" >> $env:GITHUB_OUTPUT
+          "msix_name=$($metadata.MsixName)" >> $env:GITHUB_OUTPUT
+          "signed=$($metadata.Signed.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: Upload MSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewer-msix-${{ steps.inputs.outputs.rid }}
+          path: ${{ steps.package.outputs.msix_path }}
+          if-no-files-found: error
+
+      - name: Publish GitHub release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.package.outputs.msix_path }}
+
+      - name: Resolve winget installer URL
+        id: installer
+        shell: pwsh
+        run: |
+          $installerUrl = "${{ github.event.inputs.installer_url }}"
+          if ([string]::IsNullOrWhiteSpace($installerUrl) -and "${{ github.ref_type }}" -eq "tag") {
+            $installerUrl = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.package.outputs.msix_name }}"
+          }
+          if ([string]::IsNullOrWhiteSpace($installerUrl)) {
+            $installerUrl = "https://example.invalid/${{ steps.package.outputs.msix_name }}"
+          }
+          "installer_url=$installerUrl" >> $env:GITHUB_OUTPUT
+
+      - name: Generate winget manifests
+        id: winget
+        shell: pwsh
+        run: |
+          $architecture = switch ("${{ steps.inputs.outputs.rid }}") {
+            "win-arm64" { "ARM64" }
+            "win-x86" { "x86" }
+            default { "x64" }
+          }
+
+          $args = @(
+            "-ExecutionPolicy", "Bypass",
+            "-File", "scripts/generate-winget-manifests.ps1",
+            "-MsixPath", "${{ steps.package.outputs.msix_path }}",
+            "-InstallerUrl", "${{ steps.installer.outputs.installer_url }}",
+            "-Architecture", $architecture,
+            "-PackageVersion", "${{ steps.inputs.outputs.version }}"
+          )
+          if ("${{ steps.package.outputs.signed }}" -ne "true") {
+            $args += "-AllowUnsignedMsix"
+          }
+
+          $manifest = & powershell @args | ConvertFrom-Json
+          "manifest_root=$($manifest.OutputDir)" >> $env:GITHUB_OUTPUT
+
+      - name: Validate winget manifests
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File scripts/validate-winget.ps1 -ManifestRoot "${{ steps.winget.outputs.manifest_root }}"
+
+      - name: Upload winget manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: winget-manifests-${{ steps.inputs.outputs.version }}
+          path: ${{ steps.winget.outputs.manifest_root }}
+          if-no-files-found: error

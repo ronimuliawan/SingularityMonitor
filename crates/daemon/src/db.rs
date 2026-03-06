@@ -4,15 +4,18 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, named_params, params};
 use shared_contracts::{
     AfkAuditResponse, AfkWindowUsage, AppBreakdownRequest, AppBreakdownResponse, AppUsageRow,
-    CapAlertEvent, CapDefinition, DeleteCapDefinitionRequest, DeleteCapDefinitionResponse,
-    GetInterfacesResponse, IngestAttributedUsageRequest, IngestAttributedUsageResponse,
-    InterfaceBreakdownRequest, InterfaceBreakdownResponse, InterfaceInfo, InterfaceUsageRow,
-    ListCapAlertEventsRequest, ListCapAlertEventsResponse, ListCapDefinitionsResponse,
+    CapAlertEvent, CapDefinition, CompactDatabaseResponse, DeleteCapDefinitionRequest,
+    DeleteCapDefinitionResponse, GetAfkAuditRequest, GetInterfacesResponse,
+    IngestAttributedUsageRequest, IngestAttributedUsageResponse, InterfaceBreakdownRequest,
+    InterfaceBreakdownResponse, InterfaceInfo, InterfaceUsageRow, ListCapAlertEventsRequest,
+    ListCapAlertEventsResponse, ListCapDefinitionsResponse, MarkCapAlertEventsDeliveredResponse,
     SetSettingsRequest, SettingsResponse, UpsertCapDefinitionRequest, UpsertCapDefinitionResponse,
     UsageBucket, UsageSummaryRequest, UsageSummaryResponse,
 };
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 
 const SYSTEM_PROCESS_NAME: &str = "System";
 const ATTRIBUTION_INTERFACE_GUID: &str = "{11111111-1111-1111-1111-111111111111}";
@@ -23,6 +26,23 @@ const CAP_ALERT_WINDOW_MONTHLY: &str = "monthly";
 const CAP_ALERT_WINDOW_DAILY: &str = "daily";
 const CAP_ALERT_DELIVERY_NEW: &str = "new";
 const CAP_ALERT_THRESHOLDS_PCT: [u64; 3] = [50, 80, 95];
+const RETENTION_KEY_LAST_RUN_TS: &str = "retention_cleanup_last_run_ts";
+const RETENTION_KEY_LAST_RUN_DAY_START_TS: &str = "retention_cleanup_last_run_day_start_ts";
+const RETENTION_KEY_CUTOFF_TS: &str = "retention_cleanup_cutoff_ts";
+const RETENTION_KEY_DELETED_USAGE_RECORDS: &str = "retention_cleanup_deleted_usage_records";
+const RETENTION_KEY_DELETED_AFK_WINDOWS: &str = "retention_cleanup_deleted_afk_windows";
+const RETENTION_KEY_LAST_RESULT: &str = "retention_cleanup_last_result";
+const RELIABILITY_KEY_SESSION_OPEN: &str = "daemon_reliability_session_open";
+const RELIABILITY_KEY_START_COUNT: &str = "daemon_reliability_start_count";
+const RELIABILITY_KEY_CLEAN_EXIT_COUNT: &str = "daemon_reliability_clean_exit_count";
+const RELIABILITY_KEY_UNEXPECTED_EXIT_COUNT: &str = "daemon_reliability_unexpected_exit_count";
+const RELIABILITY_KEY_LAST_START_TS: &str = "daemon_reliability_last_start_ts";
+const RELIABILITY_KEY_LAST_EXIT_TS: &str = "daemon_reliability_last_exit_ts";
+const RELIABILITY_KEY_LAST_ERROR_TS: &str = "daemon_reliability_last_error_ts";
+const RELIABILITY_KEY_LAST_ERROR_STAGE: &str = "daemon_reliability_last_error_stage";
+const RELIABILITY_KEY_LAST_ERROR_MESSAGE: &str = "daemon_reliability_last_error_message";
+const RELIABILITY_KEY_POLL_ERROR_COUNT: &str = "daemon_reliability_poll_error_count";
+const RELIABILITY_KEY_IPC_ERROR_COUNT: &str = "daemon_reliability_ipc_error_count";
 
 #[derive(Clone)]
 pub struct Db {
@@ -35,6 +55,29 @@ struct ActiveCapDefinition {
     scope: String,
     interface_guid: Option<String>,
     monthly_cap_bytes: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct RetentionCleanupStatus {
+    pub last_run_ts: i64,
+    pub cutoff_ts: i64,
+    pub deleted_usage_records: u64,
+    pub deleted_afk_windows: u64,
+    pub last_result: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReliabilityStatus {
+    pub daemon_start_count: u64,
+    pub daemon_clean_exit_count: u64,
+    pub daemon_unexpected_exit_count: u64,
+    pub daemon_last_start_ts: i64,
+    pub daemon_last_exit_ts: i64,
+    pub daemon_last_error_ts: i64,
+    pub daemon_last_error_stage: String,
+    pub daemon_last_error_message: String,
+    pub poll_error_count: u64,
+    pub ipc_error_count: u64,
 }
 
 impl Db {
@@ -108,6 +151,172 @@ impl Db {
             .unwrap_or(default)
             .clamp(30, 3600);
         Ok(threshold)
+    }
+
+    pub fn get_retention_cleanup_status(&self) -> Result<RetentionCleanupStatus> {
+        let conn = self.open_connection()?;
+        Ok(RetentionCleanupStatus {
+            last_run_ts: read_setting_i64(&conn, RETENTION_KEY_LAST_RUN_TS)?.unwrap_or(0),
+            cutoff_ts: read_setting_i64(&conn, RETENTION_KEY_CUTOFF_TS)?.unwrap_or(0),
+            deleted_usage_records: read_setting_u64(&conn, RETENTION_KEY_DELETED_USAGE_RECORDS)?
+                .unwrap_or(0),
+            deleted_afk_windows: read_setting_u64(&conn, RETENTION_KEY_DELETED_AFK_WINDOWS)?
+                .unwrap_or(0),
+            last_result: read_setting_string(&conn, RETENTION_KEY_LAST_RESULT)?
+                .unwrap_or_else(|| "never".to_string()),
+        })
+    }
+
+    pub fn get_reliability_status(&self) -> Result<ReliabilityStatus> {
+        let conn = self.open_connection()?;
+        Ok(ReliabilityStatus {
+            daemon_start_count: read_setting_u64(&conn, RELIABILITY_KEY_START_COUNT)?.unwrap_or(0),
+            daemon_clean_exit_count: read_setting_u64(&conn, RELIABILITY_KEY_CLEAN_EXIT_COUNT)?
+                .unwrap_or(0),
+            daemon_unexpected_exit_count: read_setting_u64(
+                &conn,
+                RELIABILITY_KEY_UNEXPECTED_EXIT_COUNT,
+            )?
+            .unwrap_or(0),
+            daemon_last_start_ts: read_setting_i64(&conn, RELIABILITY_KEY_LAST_START_TS)?
+                .unwrap_or(0),
+            daemon_last_exit_ts: read_setting_i64(&conn, RELIABILITY_KEY_LAST_EXIT_TS)?
+                .unwrap_or(0),
+            daemon_last_error_ts: read_setting_i64(&conn, RELIABILITY_KEY_LAST_ERROR_TS)?
+                .unwrap_or(0),
+            daemon_last_error_stage: read_setting_string(&conn, RELIABILITY_KEY_LAST_ERROR_STAGE)?
+                .unwrap_or_default(),
+            daemon_last_error_message: read_setting_string(
+                &conn,
+                RELIABILITY_KEY_LAST_ERROR_MESSAGE,
+            )?
+            .unwrap_or_default(),
+            poll_error_count: read_setting_u64(&conn, RELIABILITY_KEY_POLL_ERROR_COUNT)?
+                .unwrap_or(0),
+            ipc_error_count: read_setting_u64(&conn, RELIABILITY_KEY_IPC_ERROR_COUNT)?.unwrap_or(0),
+        })
+    }
+
+    pub fn mark_daemon_start(&self, ts: i64) -> Result<()> {
+        let mut conn = self.open_connection()?;
+        let tx = conn.transaction()?;
+        let session_open = read_setting_bool(&tx, RELIABILITY_KEY_SESSION_OPEN)?.unwrap_or(false);
+        if session_open {
+            increment_setting_u64(&tx, RELIABILITY_KEY_UNEXPECTED_EXIT_COUNT, ts)?;
+        }
+
+        increment_setting_u64(&tx, RELIABILITY_KEY_START_COUNT, ts)?;
+        upsert_setting(&tx, RELIABILITY_KEY_LAST_START_TS, &ts.to_string(), ts)?;
+        upsert_setting(&tx, RELIABILITY_KEY_SESSION_OPEN, "1", ts)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn mark_daemon_clean_exit(&self, ts: i64) -> Result<()> {
+        let mut conn = self.open_connection()?;
+        let tx = conn.transaction()?;
+        increment_setting_u64(&tx, RELIABILITY_KEY_CLEAN_EXIT_COUNT, ts)?;
+        upsert_setting(&tx, RELIABILITY_KEY_LAST_EXIT_TS, &ts.to_string(), ts)?;
+        upsert_setting(&tx, RELIABILITY_KEY_SESSION_OPEN, "0", ts)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn increment_poll_error_count(&self, ts: i64, message: &str) -> Result<()> {
+        let mut conn = self.open_connection()?;
+        let tx = conn.transaction()?;
+        increment_setting_u64(&tx, RELIABILITY_KEY_POLL_ERROR_COUNT, ts)?;
+        write_reliability_error(&tx, ts, "poll", message)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn increment_ipc_error_count(&self, ts: i64, message: &str) -> Result<()> {
+        let mut conn = self.open_connection()?;
+        let tx = conn.transaction()?;
+        increment_setting_u64(&tx, RELIABILITY_KEY_IPC_ERROR_COUNT, ts)?;
+        write_reliability_error(&tx, ts, "ipc", message)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn record_daemon_error(&self, ts: i64, stage: &str, message: &str) -> Result<()> {
+        let mut conn = self.open_connection()?;
+        let tx = conn.transaction()?;
+        write_reliability_error(&tx, ts, stage, message)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn run_retention_cleanup_if_due(&self, now_ts: i64) -> Result<()> {
+        if now_ts <= 0 {
+            return Ok(());
+        }
+
+        let mut conn = self.open_connection()?;
+        let retention_days = read_setting_u32(&conn, "retention_days")?
+            .unwrap_or(0)
+            .min(3650);
+        let current_day_start = utc_day_start_ts(now_ts);
+        let last_run_day_start =
+            read_setting_i64(&conn, RETENTION_KEY_LAST_RUN_DAY_START_TS)?.unwrap_or(0);
+
+        if last_run_day_start >= current_day_start {
+            return Ok(());
+        }
+
+        if retention_days > 0 {
+            let cutoff_ts = current_day_start
+                .saturating_sub(i64::from(retention_days).saturating_mul(24 * 3600));
+            let tx = conn.transaction()?;
+            let deleted_usage_records = tx.execute(
+                "DELETE FROM usage_records WHERE ts < ?1",
+                params![cutoff_ts],
+            )? as u64;
+            let deleted_afk_windows = tx.execute(
+                "DELETE FROM afk_windows WHERE end_ts < ?1",
+                params![cutoff_ts],
+            )? as u64;
+            upsert_setting(
+                &tx,
+                RETENTION_KEY_DELETED_USAGE_RECORDS,
+                &deleted_usage_records.to_string(),
+                now_ts,
+            )?;
+            upsert_setting(
+                &tx,
+                RETENTION_KEY_DELETED_AFK_WINDOWS,
+                &deleted_afk_windows.to_string(),
+                now_ts,
+            )?;
+            upsert_setting(&tx, RETENTION_KEY_LAST_RESULT, "ok", now_ts)?;
+            upsert_setting(&tx, RETENTION_KEY_CUTOFF_TS, &cutoff_ts.to_string(), now_ts)?;
+            upsert_setting(&tx, RETENTION_KEY_LAST_RUN_TS, &now_ts.to_string(), now_ts)?;
+            upsert_setting(
+                &tx,
+                RETENTION_KEY_LAST_RUN_DAY_START_TS,
+                &current_day_start.to_string(),
+                now_ts,
+            )?;
+            tx.commit()?;
+            return Ok(());
+        }
+
+        let tx = conn.transaction()?;
+        upsert_setting(&tx, RETENTION_KEY_DELETED_USAGE_RECORDS, "0", now_ts)?;
+        upsert_setting(&tx, RETENTION_KEY_DELETED_AFK_WINDOWS, "0", now_ts)?;
+        upsert_setting(&tx, RETENTION_KEY_LAST_RESULT, "skipped_unlimited", now_ts)?;
+        upsert_setting(&tx, RETENTION_KEY_CUTOFF_TS, "0", now_ts)?;
+        upsert_setting(&tx, RETENTION_KEY_LAST_RUN_TS, &now_ts.to_string(), now_ts)?;
+        upsert_setting(
+            &tx,
+            RETENTION_KEY_LAST_RUN_DAY_START_TS,
+            &current_day_start.to_string(),
+            now_ts,
+        )?;
+        tx.commit()?;
+
+        Ok(())
     }
 
     pub fn apply_settings(&self, ts: i64, settings: &SetSettingsRequest) -> Result<()> {
@@ -829,6 +1038,7 @@ impl Db {
             .filter(|value| !value.is_empty());
         let window_kind = normalize_cap_alert_window_filter(req.window_kind.as_deref());
         let threshold_kind = normalize_cap_alert_threshold_filter(req.threshold_kind.as_deref());
+        let delivery_state = normalize_cap_alert_delivery_filter(req.delivery_state.as_deref());
 
         let mut stmt = conn.prepare(
             "
@@ -854,6 +1064,7 @@ impl Db {
               AND (:interface_guid IS NULL OR interface_guid = :interface_guid)
               AND (:window_kind IS NULL OR window_kind = :window_kind)
               AND (:threshold_kind IS NULL OR threshold_kind = :threshold_kind)
+              AND (:delivery_state IS NULL OR delivery_state = :delivery_state)
             ORDER BY fired_at DESC, id DESC
             LIMIT :limit
             ",
@@ -867,6 +1078,7 @@ impl Db {
                 ":interface_guid": interface_guid,
                 ":window_kind": window_kind.as_deref(),
                 ":threshold_kind": threshold_kind.as_deref(),
+                ":delivery_state": delivery_state.as_deref(),
                 ":limit": i64::from(limit),
             },
             |row| {
@@ -891,6 +1103,49 @@ impl Db {
 
         let events = rows.collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(ListCapAlertEventsResponse { events })
+    }
+
+    pub fn mark_cap_alert_events_delivered(
+        &self,
+        event_ids: &[i64],
+        delivered_at: i64,
+    ) -> Result<MarkCapAlertEventsDeliveredResponse> {
+        if event_ids.is_empty() {
+            return Ok(MarkCapAlertEventsDeliveredResponse { updated: 0 });
+        }
+
+        let mut ids = event_ids
+            .iter()
+            .copied()
+            .filter(|id| *id > 0)
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids.dedup();
+        if ids.is_empty() {
+            return Ok(MarkCapAlertEventsDeliveredResponse { updated: 0 });
+        }
+
+        let mut conn = self.open_connection()?;
+        let tx = conn.transaction()?;
+        let mut stmt = tx.prepare(
+            "
+            UPDATE cap_alert_events
+            SET delivery_state = 'delivered',
+                delivered_at = ?2
+            WHERE id = ?1
+              AND delivery_state = 'new'
+            ",
+        )?;
+
+        let mut updated = 0u32;
+        for id in ids {
+            let row_count = stmt.execute(params![id, delivered_at])?;
+            updated = updated.saturating_add(row_count as u32);
+        }
+        drop(stmt);
+
+        tx.commit()?;
+        Ok(MarkCapAlertEventsDeliveredResponse { updated })
     }
 
     pub fn evaluate_cap_alerts(&self, now_ts: i64) -> Result<usize> {
@@ -977,19 +1232,28 @@ impl Db {
         Ok(inserted)
     }
 
-    pub fn query_afk_audit(&self) -> Result<AfkAuditResponse> {
+    pub fn query_afk_audit(&self, req: &GetAfkAuditRequest) -> Result<AfkAuditResponse> {
         let conn = self.open_connection()?;
+        let limit = req.limit.unwrap_or(100).clamp(1, 1000);
         let mut stmt = conn.prepare(
             "
             SELECT start_ts, end_ts
             FROM afk_windows
+            WHERE (:start_ts IS NULL OR end_ts >= :start_ts)
+              AND (:end_ts IS NULL OR start_ts < :end_ts)
             ORDER BY start_ts DESC
-            LIMIT 100
+            LIMIT :limit
             ",
         )?;
 
-        let windows =
-            stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
+        let windows = stmt.query_map(
+            named_params! {
+                ":start_ts": req.start_ts,
+                ":end_ts": req.end_ts,
+                ":limit": i64::from(limit),
+            },
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )?;
 
         let mut afk_windows = Vec::new();
         for window in windows {
@@ -1156,9 +1420,32 @@ impl Db {
     }
 
     pub fn db_size_bytes(&self) -> u64 {
-        std::fs::metadata(self.path.as_ref())
-            .map(|m| m.len())
-            .unwrap_or(0)
+        sqlite_storage_size_bytes(self.path.as_ref())
+    }
+
+    pub fn compact_database(&self) -> Result<CompactDatabaseResponse> {
+        let before_bytes = self.db_size_bytes();
+        let started = Instant::now();
+
+        let conn = self.open_connection()?;
+        conn.execute_batch(
+            "
+            PRAGMA wal_checkpoint(TRUNCATE);
+            VACUUM;
+            PRAGMA optimize;
+            ",
+        )?;
+
+        let after_bytes = self.db_size_bytes();
+        let reclaimed_bytes = before_bytes.saturating_sub(after_bytes);
+        let duration_ms = started.elapsed().as_millis().clamp(0, u128::from(u64::MAX)) as u64;
+
+        Ok(CompactDatabaseResponse {
+            before_bytes,
+            after_bytes,
+            reclaimed_bytes,
+            duration_ms,
+        })
     }
 
     pub fn last_helper_ingest_ts(&self) -> Result<i64> {
@@ -1205,9 +1492,45 @@ impl Db {
         upsert_setting(&tx, "export_default_include_interfaces", "1", 0)?;
         upsert_setting(&tx, "import_status", "idle", 0)?;
         upsert_setting(&tx, "import_progress_pct", "0", 0)?;
+        upsert_setting(&tx, RETENTION_KEY_LAST_RUN_TS, "0", 0)?;
+        upsert_setting(&tx, RETENTION_KEY_LAST_RUN_DAY_START_TS, "0", 0)?;
+        upsert_setting(&tx, RETENTION_KEY_CUTOFF_TS, "0", 0)?;
+        upsert_setting(&tx, RETENTION_KEY_DELETED_USAGE_RECORDS, "0", 0)?;
+        upsert_setting(&tx, RETENTION_KEY_DELETED_AFK_WINDOWS, "0", 0)?;
+        upsert_setting(&tx, RETENTION_KEY_LAST_RESULT, "never", 0)?;
+        upsert_setting(&tx, RELIABILITY_KEY_SESSION_OPEN, "0", 0)?;
+        upsert_setting(&tx, RELIABILITY_KEY_START_COUNT, "0", 0)?;
+        upsert_setting(&tx, RELIABILITY_KEY_CLEAN_EXIT_COUNT, "0", 0)?;
+        upsert_setting(&tx, RELIABILITY_KEY_UNEXPECTED_EXIT_COUNT, "0", 0)?;
+        upsert_setting(&tx, RELIABILITY_KEY_LAST_START_TS, "0", 0)?;
+        upsert_setting(&tx, RELIABILITY_KEY_LAST_EXIT_TS, "0", 0)?;
+        upsert_setting(&tx, RELIABILITY_KEY_LAST_ERROR_TS, "0", 0)?;
+        upsert_setting(&tx, RELIABILITY_KEY_LAST_ERROR_STAGE, "", 0)?;
+        upsert_setting(&tx, RELIABILITY_KEY_LAST_ERROR_MESSAGE, "", 0)?;
+        upsert_setting(&tx, RELIABILITY_KEY_POLL_ERROR_COUNT, "0", 0)?;
+        upsert_setting(&tx, RELIABILITY_KEY_IPC_ERROR_COUNT, "0", 0)?;
         tx.commit()?;
         Ok(())
     }
+}
+
+fn sqlite_storage_size_bytes(base_path: &Path) -> u64 {
+    let mut total = std::fs::metadata(base_path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+
+    for suffix in ["-wal", "-shm"] {
+        let mut sidecar: OsString = base_path.as_os_str().to_os_string();
+        sidecar.push(suffix);
+        let sidecar_path = PathBuf::from(sidecar);
+        total = total.saturating_add(
+            std::fs::metadata(sidecar_path)
+                .map(|metadata| metadata.len())
+                .unwrap_or(0),
+        );
+    }
+
+    total
 }
 
 fn normalize_granularity(granularity: &str) -> &str {
@@ -1261,6 +1584,14 @@ fn normalize_cap_alert_threshold_filter(raw: Option<&str>) -> Option<String> {
         Some("pct_50") | Some("pct_80") | Some("pct_95") | Some("daily_cap") => {
             raw.map(str::trim).map(str::to_ascii_lowercase)
         }
+        _ => None,
+    }
+}
+
+fn normalize_cap_alert_delivery_filter(raw: Option<&str>) -> Option<String> {
+    match raw.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        Some("new") => Some("new".to_string()),
+        Some("delivered") => Some("delivered".to_string()),
         _ => None,
     }
 }
@@ -1581,6 +1912,37 @@ fn upsert_setting(conn: &Connection, key: &str, value: &str, ts: i64) -> Result<
     Ok(())
 }
 
+fn increment_setting_u64(conn: &Connection, key: &str, ts: i64) -> Result<u64> {
+    let next = read_setting_u64(conn, key)?.unwrap_or(0).saturating_add(1);
+    upsert_setting(conn, key, &next.to_string(), ts)?;
+    Ok(next)
+}
+
+fn write_reliability_error(conn: &Connection, ts: i64, stage: &str, message: &str) -> Result<()> {
+    let trimmed_stage = stage.trim();
+    let normalized_stage = if trimmed_stage.is_empty() {
+        "unknown"
+    } else {
+        trimmed_stage
+    };
+    let normalized_message = message.trim();
+    let truncated_message = if normalized_message.chars().count() > 240 {
+        normalized_message.chars().take(240).collect::<String>()
+    } else {
+        normalized_message.to_string()
+    };
+
+    upsert_setting(conn, RELIABILITY_KEY_LAST_ERROR_TS, &ts.to_string(), ts)?;
+    upsert_setting(conn, RELIABILITY_KEY_LAST_ERROR_STAGE, normalized_stage, ts)?;
+    upsert_setting(
+        conn,
+        RELIABILITY_KEY_LAST_ERROR_MESSAGE,
+        &truncated_message,
+        ts,
+    )?;
+    Ok(())
+}
+
 fn read_setting_u32(conn: &Connection, key: &str) -> Result<Option<u32>> {
     let raw = conn
         .query_row(
@@ -1591,6 +1953,30 @@ fn read_setting_u32(conn: &Connection, key: &str) -> Result<Option<u32>> {
         .optional()?;
 
     Ok(raw.and_then(|value| value.parse::<u32>().ok()))
+}
+
+fn read_setting_i64(conn: &Connection, key: &str) -> Result<Option<i64>> {
+    let raw = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1 LIMIT 1",
+            params![key],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+
+    Ok(raw.and_then(|value| value.parse::<i64>().ok()))
+}
+
+fn read_setting_u64(conn: &Connection, key: &str) -> Result<Option<u64>> {
+    let raw = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1 LIMIT 1",
+            params![key],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+
+    Ok(raw.and_then(|value| value.parse::<u64>().ok()))
 }
 
 fn read_setting_bool(conn: &Connection, key: &str) -> Result<Option<bool>> {
@@ -1758,7 +2144,7 @@ mod tests {
     const TEST_ATTRIBUTION_GUID: &str = "{11111111-1111-1111-1111-111111111111}";
     const TEST_ETHERNET_GUID: &str = "{22222222-2222-2222-2222-222222222222}";
 
-    fn new_test_db() -> Db {
+    fn new_test_db_path() -> PathBuf {
         let mut path = std::env::temp_dir();
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1770,6 +2156,11 @@ mod tests {
             nonce
         ));
         let _ = std::fs::remove_file(&path);
+        path
+    }
+
+    fn new_test_db() -> Db {
+        let path = new_test_db_path();
         Db::initialize(path).expect("failed to initialize test db")
     }
 
@@ -1821,6 +2212,154 @@ mod tests {
         )
         .expect("insert usage");
         tx.commit().expect("commit tx");
+    }
+
+    fn table_exists(conn: &Connection, table_name: &str) -> bool {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+            params![table_name],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|exists| exists == 1)
+        .unwrap_or(false)
+    }
+
+    fn index_exists(conn: &Connection, index_name: &str) -> bool {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1)",
+            params![index_name],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|exists| exists == 1)
+        .unwrap_or(false)
+    }
+
+    fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> bool {
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info({table_name})"))
+            .expect("prepare table_info pragma");
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("query table_info")
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .expect("collect table columns");
+        columns
+            .iter()
+            .any(|column| column.eq_ignore_ascii_case(column_name))
+    }
+
+    #[test]
+    fn initialize_is_idempotent_on_existing_database() {
+        let path = new_test_db_path();
+        let first = Db::initialize(&path).expect("initialize first db");
+        let second = Db::initialize(&path).expect("initialize second db");
+
+        let first_settings = first.get_settings().expect("read first settings");
+        let second_settings = second.get_settings().expect("read second settings");
+
+        assert_eq!(
+            first_settings.poll_interval_seconds,
+            second_settings.poll_interval_seconds
+        );
+        assert_eq!(
+            first_settings.retention_days,
+            second_settings.retention_days
+        );
+
+        let conn = second.open_connection().expect("open second db");
+        assert!(table_exists(&conn, "usage_records"));
+        assert!(table_exists(&conn, "cap_alert_events"));
+    }
+
+    #[test]
+    fn initialize_backfills_missing_tables_and_retention_defaults() {
+        let path = new_test_db_path();
+        let conn = Connection::open(&path).expect("open raw sqlite db");
+        conn.execute_batch(
+            "
+            CREATE TABLE settings (
+                key         TEXT PRIMARY KEY,
+                value       TEXT NOT NULL,
+                updated_at  INTEGER NOT NULL
+            );
+            INSERT INTO settings(key, value, updated_at)
+            VALUES('poll_interval_seconds', '90', 123);
+            ",
+        )
+        .expect("seed partial schema");
+
+        let db = Db::initialize(&path).expect("initialize db with partial schema");
+        let settings = db.get_settings().expect("read settings after init");
+        assert_eq!(settings.poll_interval_seconds, 60);
+
+        let status = db
+            .get_retention_cleanup_status()
+            .expect("read retention cleanup status");
+        assert_eq!(status.last_result, "never");
+
+        let conn = db.open_connection().expect("open initialized db");
+        assert!(table_exists(&conn, "usage_records"));
+        assert!(table_exists(&conn, "afk_windows"));
+        assert!(table_exists(&conn, "cap_alert_events"));
+    }
+
+    #[test]
+    fn schema_contains_required_tables_columns_and_indexes() {
+        let db = new_test_db();
+        let conn = db.open_connection().expect("open db");
+
+        assert!(table_exists(&conn, "settings"));
+        assert!(table_exists(&conn, "usage_records"));
+        assert!(table_exists(&conn, "monthly_cap_definitions"));
+        assert!(table_exists(&conn, "cap_alert_events"));
+        assert!(table_exists(&conn, "afk_windows"));
+
+        assert!(column_exists(
+            &conn,
+            "monthly_cap_definitions",
+            "monthly_cap_bytes"
+        ));
+        assert!(column_exists(&conn, "cap_alert_events", "delivery_state"));
+        assert!(column_exists(&conn, "cap_alert_events", "delivered_at"));
+        assert!(column_exists(&conn, "usage_records", "source"));
+
+        assert!(index_exists(&conn, "idx_usage_unique"));
+        assert!(index_exists(&conn, "idx_monthly_caps_scope_interface"));
+        assert!(index_exists(&conn, "idx_cap_alert_events_unique"));
+        assert!(index_exists(&conn, "idx_cap_alert_events_delivery"));
+        assert!(index_exists(&conn, "idx_afk_start"));
+    }
+
+    #[test]
+    fn compact_database_returns_consistent_metrics_and_keeps_db_usable() {
+        let db = new_test_db();
+        let now_ts = 1_700_000_000;
+
+        for offset in 0..200 {
+            insert_usage(
+                &db,
+                now_ts + offset,
+                "compact-sample.exe",
+                TEST_ETHERNET_GUID,
+                "Ethernet",
+                6,
+                1000,
+                500,
+                "interface_poll",
+            );
+        }
+
+        let result = db.compact_database().expect("compact database");
+        assert_eq!(
+            result.reclaimed_bytes,
+            result.before_bytes.saturating_sub(result.after_bytes)
+        );
+        assert!(result.duration_ms > 0 || result.before_bytes == result.after_bytes);
+
+        let status = db
+            .get_import_status()
+            .expect("read import status after compact");
+        assert_eq!(status.0, "idle");
     }
 
     #[test]
@@ -2394,6 +2933,7 @@ mod tests {
                 interface_guid: None,
                 window_kind: None,
                 threshold_kind: None,
+                delivery_state: None,
                 limit: Some(2),
             })
             .expect("list cap alerts");
@@ -2451,6 +2991,7 @@ mod tests {
                 interface_guid: Some(TEST_ETHERNET_GUID.to_string()),
                 window_kind: None,
                 threshold_kind: Some("pct_50".to_string()),
+                delivery_state: None,
                 limit: Some(10),
             })
             .expect("list filtered alerts");
@@ -2460,6 +3001,315 @@ mod tests {
         assert_eq!(event.scope, "interface");
         assert_eq!(event.interface_guid.as_deref(), Some(TEST_ETHERNET_GUID));
         assert_eq!(event.threshold_kind, "pct_50");
+    }
+
+    #[test]
+    fn mark_cap_alert_events_delivered_is_idempotent_and_filterable() {
+        let db = new_test_db();
+        let now_ts = 1_700_000_000;
+        db.upsert_cap_definition(
+            now_ts,
+            &UpsertCapDefinitionRequest {
+                id: None,
+                scope: "global".to_string(),
+                interface_guid: None,
+                monthly_cap_bytes: 1000,
+                is_active: true,
+            },
+        )
+        .expect("create cap");
+
+        insert_usage(
+            &db,
+            now_ts - 120,
+            "delivery-state-app.exe",
+            TEST_ETHERNET_GUID,
+            "Ethernet",
+            6,
+            500,
+            100,
+            "interface_poll",
+        );
+        db.evaluate_cap_alerts(now_ts).expect("evaluate thresholds");
+
+        let pending = db
+            .list_cap_alert_events(&ListCapAlertEventsRequest {
+                start_ts: None,
+                end_ts: None,
+                scope: None,
+                interface_guid: None,
+                window_kind: None,
+                threshold_kind: None,
+                delivery_state: Some("new".to_string()),
+                limit: Some(10),
+            })
+            .expect("list pending alerts");
+        assert_eq!(pending.events.len(), 2);
+
+        let ids = pending
+            .events
+            .iter()
+            .map(|event| event.id)
+            .collect::<Vec<_>>();
+        let marked_once = db
+            .mark_cap_alert_events_delivered(&ids, now_ts + 10)
+            .expect("mark delivered once");
+        assert_eq!(marked_once.updated, 2);
+
+        let marked_twice = db
+            .mark_cap_alert_events_delivered(&ids, now_ts + 20)
+            .expect("mark delivered twice");
+        assert_eq!(marked_twice.updated, 0);
+
+        let pending_after = db
+            .list_cap_alert_events(&ListCapAlertEventsRequest {
+                start_ts: None,
+                end_ts: None,
+                scope: None,
+                interface_guid: None,
+                window_kind: None,
+                threshold_kind: None,
+                delivery_state: Some("new".to_string()),
+                limit: Some(10),
+            })
+            .expect("list pending alerts after mark");
+        assert!(pending_after.events.is_empty());
+
+        let delivered = db
+            .list_cap_alert_events(&ListCapAlertEventsRequest {
+                start_ts: None,
+                end_ts: None,
+                scope: None,
+                interface_guid: None,
+                window_kind: None,
+                threshold_kind: None,
+                delivery_state: Some("delivered".to_string()),
+                limit: Some(10),
+            })
+            .expect("list delivered alerts");
+        assert_eq!(delivered.events.len(), 2);
+        assert!(
+            delivered
+                .events
+                .iter()
+                .all(|event| event.delivered_at.is_some())
+        );
+    }
+
+    #[test]
+    fn retention_cleanup_skips_when_unlimited() {
+        let db = new_test_db();
+        let now_ts = 1_700_000_000;
+
+        insert_usage(
+            &db,
+            now_ts - 1_000_000,
+            "retention-unlimited.exe",
+            TEST_ETHERNET_GUID,
+            "Ethernet",
+            6,
+            100,
+            20,
+            "interface_poll",
+        );
+        db.upsert_afk_window(now_ts - 1_000_100, now_ts - 1_000_000, "last_input")
+            .expect("insert old afk window");
+
+        db.run_retention_cleanup_if_due(now_ts)
+            .expect("run retention cleanup");
+
+        let conn = db.open_connection().expect("open db");
+        let usage_count = conn
+            .query_row("SELECT COUNT(*) FROM usage_records", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count usage rows");
+        let afk_count = conn
+            .query_row("SELECT COUNT(*) FROM afk_windows", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count afk rows");
+        assert_eq!(usage_count, 1);
+        assert_eq!(afk_count, 1);
+
+        let status = db
+            .get_retention_cleanup_status()
+            .expect("get retention cleanup status");
+        assert_eq!(status.last_result, "skipped_unlimited");
+        assert_eq!(status.deleted_usage_records, 0);
+        assert_eq!(status.deleted_afk_windows, 0);
+        assert!(status.last_run_ts > 0);
+    }
+
+    #[test]
+    fn retention_cleanup_deletes_old_rows_and_runs_once_per_day() {
+        let db = new_test_db();
+        let now_ts = 1_700_000_000;
+
+        db.apply_settings(
+            now_ts,
+            &SetSettingsRequest {
+                poll_interval_seconds: None,
+                retention_days: Some(1),
+                afk_idle_threshold_seconds: None,
+                onboarding_completed: None,
+                export_default_granularity: None,
+                export_default_include_summary: None,
+                export_default_include_apps: None,
+                export_default_include_interfaces: None,
+            },
+        )
+        .expect("set retention days");
+
+        let day_start = utc_day_start_ts(now_ts);
+        let cutoff_ts = day_start.saturating_sub(24 * 3600);
+
+        insert_usage(
+            &db,
+            cutoff_ts - 1,
+            "retention-old.exe",
+            TEST_ETHERNET_GUID,
+            "Ethernet",
+            6,
+            100,
+            10,
+            "interface_poll",
+        );
+        insert_usage(
+            &db,
+            cutoff_ts,
+            "retention-boundary.exe",
+            TEST_ETHERNET_GUID,
+            "Ethernet",
+            6,
+            100,
+            10,
+            "interface_poll",
+        );
+        insert_usage(
+            &db,
+            cutoff_ts + 1,
+            "retention-new.exe",
+            TEST_ETHERNET_GUID,
+            "Ethernet",
+            6,
+            100,
+            10,
+            "interface_poll",
+        );
+
+        db.upsert_afk_window(cutoff_ts - 300, cutoff_ts - 200, "last_input")
+            .expect("insert old afk window");
+        db.upsert_afk_window(cutoff_ts, cutoff_ts + 10, "last_input")
+            .expect("insert boundary afk window");
+        db.upsert_afk_window(cutoff_ts + 200, cutoff_ts + 260, "last_input")
+            .expect("insert new afk window");
+
+        db.run_retention_cleanup_if_due(now_ts)
+            .expect("run retention cleanup first");
+
+        let conn = db.open_connection().expect("open db");
+        let usage_after_first = conn
+            .query_row("SELECT COUNT(*) FROM usage_records", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count usage after first cleanup");
+        let afk_after_first = conn
+            .query_row("SELECT COUNT(*) FROM afk_windows", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count afk after first cleanup");
+        assert_eq!(usage_after_first, 2);
+        assert_eq!(afk_after_first, 2);
+
+        let first_status = db
+            .get_retention_cleanup_status()
+            .expect("status after first cleanup");
+        assert_eq!(first_status.last_result, "ok");
+        assert_eq!(first_status.cutoff_ts, cutoff_ts);
+        assert_eq!(first_status.deleted_usage_records, 1);
+        assert_eq!(first_status.deleted_afk_windows, 1);
+
+        insert_usage(
+            &db,
+            cutoff_ts - 2,
+            "retention-old-second.exe",
+            TEST_ETHERNET_GUID,
+            "Ethernet",
+            6,
+            100,
+            10,
+            "interface_poll",
+        );
+        db.upsert_afk_window(cutoff_ts - 900, cutoff_ts - 850, "last_input")
+            .expect("insert second old afk window");
+
+        db.run_retention_cleanup_if_due(now_ts + 60)
+            .expect("run retention cleanup second");
+
+        let usage_after_second = conn
+            .query_row("SELECT COUNT(*) FROM usage_records", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count usage after second cleanup");
+        let afk_after_second = conn
+            .query_row("SELECT COUNT(*) FROM afk_windows", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count afk after second cleanup");
+        assert_eq!(usage_after_second, 3);
+        assert_eq!(afk_after_second, 3);
+
+        let second_status = db
+            .get_retention_cleanup_status()
+            .expect("status after second cleanup");
+        assert_eq!(second_status.last_run_ts, first_status.last_run_ts);
+        assert_eq!(
+            second_status.deleted_usage_records,
+            first_status.deleted_usage_records
+        );
+        assert_eq!(
+            second_status.deleted_afk_windows,
+            first_status.deleted_afk_windows
+        );
+    }
+
+    #[test]
+    fn reliability_status_tracks_starts_clean_exits_and_errors() {
+        let db = new_test_db();
+        let now_ts = 1_700_000_000;
+
+        db.mark_daemon_start(now_ts).expect("mark first start");
+        db.record_daemon_error(now_ts + 5, "init", "startup issue")
+            .expect("record daemon error");
+        db.increment_poll_error_count(now_ts + 10, "poll issue")
+            .expect("increment poll errors");
+        db.increment_ipc_error_count(now_ts + 15, "ipc issue")
+            .expect("increment ipc errors");
+
+        let mid_status = db
+            .get_reliability_status()
+            .expect("read mid reliability status");
+        assert_eq!(mid_status.daemon_start_count, 1);
+        assert_eq!(mid_status.daemon_unexpected_exit_count, 0);
+        assert_eq!(mid_status.poll_error_count, 1);
+        assert_eq!(mid_status.ipc_error_count, 1);
+        assert_eq!(mid_status.daemon_last_error_stage, "ipc");
+        assert_eq!(mid_status.daemon_last_error_message, "ipc issue");
+
+        db.mark_daemon_start(now_ts + 30)
+            .expect("mark second start without clean exit");
+        db.mark_daemon_clean_exit(now_ts + 60)
+            .expect("mark clean exit");
+
+        let final_status = db
+            .get_reliability_status()
+            .expect("read final reliability status");
+        assert_eq!(final_status.daemon_start_count, 2);
+        assert_eq!(final_status.daemon_clean_exit_count, 1);
+        assert_eq!(final_status.daemon_unexpected_exit_count, 1);
+        assert_eq!(final_status.daemon_last_start_ts, now_ts + 30);
+        assert_eq!(final_status.daemon_last_exit_ts, now_ts + 60);
     }
 
     #[test]
@@ -2520,7 +3370,13 @@ mod tests {
             "helper",
         );
 
-        let response = db.query_afk_audit().expect("query afk audit");
+        let response = db
+            .query_afk_audit(&GetAfkAuditRequest {
+                start_ts: None,
+                end_ts: None,
+                limit: Some(100),
+            })
+            .expect("query afk audit");
         assert_eq!(response.afk_windows.len(), 1);
 
         let window = &response.afk_windows[0];
@@ -2530,5 +3386,26 @@ mod tests {
         assert_eq!(window.bytes_sent, 300);
         assert_eq!(window.bytes_recv, 100);
         assert_eq!(window.top_apps.len(), 2);
+    }
+
+    #[test]
+    fn afk_audit_respects_time_range_filters() {
+        let db = new_test_db();
+        db.upsert_afk_window(1_000, 1_030, "last_input")
+            .expect("insert first afk window");
+        db.upsert_afk_window(2_000, 2_030, "last_input")
+            .expect("insert second afk window");
+
+        let filtered = db
+            .query_afk_audit(&GetAfkAuditRequest {
+                start_ts: Some(1_900),
+                end_ts: Some(2_100),
+                limit: Some(100),
+            })
+            .expect("query filtered afk windows");
+
+        assert_eq!(filtered.afk_windows.len(), 1);
+        assert_eq!(filtered.afk_windows[0].start_ts, 2_000);
+        assert_eq!(filtered.afk_windows[0].end_ts, 2_030);
     }
 }

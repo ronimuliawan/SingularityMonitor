@@ -10,6 +10,18 @@ Windows 11 network-usage monitor built for low steady-state overhead.
 - `crates/shared-contracts` - shared JSON IPC envelope and payload types
 - `viewer` - WinUI 3 (.NET 8) viewer
 - `scripts` - build and run helpers for local development
+- `packaging` - release-time winget manifest assets and notes
+
+## User and release docs
+
+- Install guide: `docs/install.md`
+- User guide: `docs/user-guide.md`
+- Troubleshooting: `docs/troubleshooting.md`
+- Accessibility audit: `docs/accessibility-audit.md`
+- Signing workflow: `docs/release-signing.md`
+- QA runbook: `docs/qa-matrix.md`
+- Signed winget rehearsal: `docs/winget-rehearsal-runbook.md`
+- Go / no-go checklist: `docs/go-no-go-checklist.md`
 
 ## Build
 
@@ -22,6 +34,12 @@ Or build everything:
 
 ```bat
 scripts\build-all.cmd
+```
+
+Create a release-style MSIX package:
+
+```bat
+scripts\build-viewer.cmd --msix
 ```
 
 Run M0 feasibility checks (helper probe + pipe + memory gate):
@@ -158,5 +176,6 @@ The script sets `SM_DATA_ROOT` to `runtime-data` in this repository to avoid wri
 - Daemon supports optional working-set trim (`SM_TRIM_WORKING_SET=1`, default enabled) to keep steady-state RSS within the PRD envelope.
 - Daemon query path now enforces source-cutover precedence to avoid overlap double-counting between import and live collection streams.
 - GitHub Actions CI baseline is present for Rust workspace build/tests and viewer Release build (`.github/workflows/ci.yml`).
+- GitHub Actions release packaging can now generate release MSIX packages plus winget manifests (`.github/workflows/release.yml`).
 
-Next milestones are full P0 dashboard/export parity, AFK/event overlays, alerting, and analytics completion from the PRD.
+Next milestones are full P2 analytics features plus final QA and launch sign-off from the PRD.

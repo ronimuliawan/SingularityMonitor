@@ -7,10 +7,10 @@ use crate::poller;
 use crate::time::unix_timestamp;
 use anyhow::Result;
 use shared_contracts::{
-    AppBreakdownRequest, DaemonStatusResponse, DeleteCapDefinitionRequest,
-    IngestAttributedUsageRequest, InterfaceBreakdownRequest, IpcMessage, ListCapAlertEventsRequest,
-    SetImportStatusRequest, SetSettingsRequest, TimeRangeRequest, UpsertCapDefinitionRequest,
-    UsageSummaryRequest,
+    AppBreakdownRequest, CompactDatabaseRequest, DaemonStatusResponse, DeleteCapDefinitionRequest,
+    GetAfkAuditRequest, IngestAttributedUsageRequest, InterfaceBreakdownRequest, IpcMessage,
+    ListCapAlertEventsRequest, MarkCapAlertEventsDeliveredRequest, SetImportStatusRequest,
+    SetSettingsRequest, TimeRangeRequest, UpsertCapDefinitionRequest, UsageSummaryRequest,
 };
 use std::fs::OpenOptions;
 use std::mem::size_of;
@@ -49,6 +49,30 @@ impl RuntimeContext {
             .db
             .get_import_status()
             .unwrap_or_else(|_| ("idle".to_string(), 0));
+        let retention_cleanup = self.db.get_retention_cleanup_status().unwrap_or_else(|_| {
+            crate::db::RetentionCleanupStatus {
+                last_run_ts: 0,
+                cutoff_ts: 0,
+                deleted_usage_records: 0,
+                deleted_afk_windows: 0,
+                last_result: "unknown".to_string(),
+            }
+        });
+        let reliability =
+            self.db
+                .get_reliability_status()
+                .unwrap_or_else(|_| crate::db::ReliabilityStatus {
+                    daemon_start_count: 0,
+                    daemon_clean_exit_count: 0,
+                    daemon_unexpected_exit_count: 0,
+                    daemon_last_start_ts: 0,
+                    daemon_last_exit_ts: 0,
+                    daemon_last_error_ts: 0,
+                    daemon_last_error_stage: String::new(),
+                    daemon_last_error_message: String::new(),
+                    poll_error_count: 0,
+                    ipc_error_count: 0,
+                });
         DaemonStatusResponse {
             version: env!("CARGO_PKG_VERSION").to_string(),
             uptime_seconds: state.started_at.elapsed().as_secs(),
@@ -62,6 +86,27 @@ impl RuntimeContext {
             import_progress_pct,
             attribution_mode: self.attribution_mode.clone(),
             last_helper_ingest_ts,
+            retention_cleanup_last_run_ts: retention_cleanup.last_run_ts,
+            retention_cleanup_cutoff_ts: retention_cleanup.cutoff_ts,
+            retention_cleanup_deleted_usage_records: retention_cleanup.deleted_usage_records,
+            retention_cleanup_deleted_afk_windows: retention_cleanup.deleted_afk_windows,
+            retention_cleanup_last_result: retention_cleanup.last_result,
+            daemon_start_count: reliability.daemon_start_count,
+            daemon_clean_exit_count: reliability.daemon_clean_exit_count,
+            daemon_unexpected_exit_count: reliability.daemon_unexpected_exit_count,
+            daemon_last_start_ts: reliability.daemon_last_start_ts,
+            daemon_last_exit_ts: reliability.daemon_last_exit_ts,
+            daemon_last_error_ts: reliability.daemon_last_error_ts,
+            daemon_last_error_stage: reliability.daemon_last_error_stage,
+            daemon_last_error_message: reliability.daemon_last_error_message,
+            poll_error_count: reliability.poll_error_count,
+            ipc_error_count: reliability.ipc_error_count,
+        }
+    }
+
+    fn on_ipc_transport_error(&self, message: &str) {
+        if let Err(error) = self.db.increment_ipc_error_count(unix_timestamp(), message) {
+            warn!("failed to record ipc transport error: {error:#}");
         }
     }
 }
@@ -167,6 +212,77 @@ impl IpcRequestHandler for RuntimeContext {
                     serde_json::from_value::<ListCapAlertEventsRequest>(request.payload.clone());
                 match parsed {
                     Ok(payload) => match self.db.list_cap_alert_events(&payload) {
+                        Ok(result) => {
+                            IpcMessage::response(&request, result).unwrap_or_else(|error| {
+                                IpcMessage::error_response(
+                                    &request,
+                                    500,
+                                    format!("encode failed: {error}"),
+                                )
+                            })
+                        }
+                        Err(error) => IpcMessage::error_response(&request, 500, error.to_string()),
+                    },
+                    Err(error) => IpcMessage::error_response(
+                        &request,
+                        400,
+                        format!("invalid payload: {error}"),
+                    ),
+                }
+            }
+            shared_contracts::METHOD_MARK_CAP_ALERT_EVENTS_DELIVERED => {
+                let parsed = serde_json::from_value::<MarkCapAlertEventsDeliveredRequest>(
+                    request.payload.clone(),
+                );
+                match parsed {
+                    Ok(payload) => {
+                        if payload.event_ids.is_empty() {
+                            return IpcMessage::error_response(
+                                &request,
+                                400,
+                                "event_ids must contain at least one id",
+                            );
+                        }
+
+                        if payload.event_ids.iter().any(|id| *id <= 0) {
+                            return IpcMessage::error_response(
+                                &request,
+                                400,
+                                "event_ids must all be greater than 0",
+                            );
+                        }
+
+                        let ts = unix_timestamp();
+                        match self
+                            .db
+                            .mark_cap_alert_events_delivered(&payload.event_ids, ts)
+                        {
+                            Ok(result) => {
+                                IpcMessage::response(&request, result).unwrap_or_else(|error| {
+                                    IpcMessage::error_response(
+                                        &request,
+                                        500,
+                                        format!("encode failed: {error}"),
+                                    )
+                                })
+                            }
+                            Err(error) => {
+                                IpcMessage::error_response(&request, 500, error.to_string())
+                            }
+                        }
+                    }
+                    Err(error) => IpcMessage::error_response(
+                        &request,
+                        400,
+                        format!("invalid payload: {error}"),
+                    ),
+                }
+            }
+            shared_contracts::METHOD_COMPACT_DATABASE => {
+                let parsed =
+                    serde_json::from_value::<CompactDatabaseRequest>(request.payload.clone());
+                match parsed {
+                    Ok(_) => match self.db.compact_database() {
                         Ok(result) => {
                             IpcMessage::response(&request, result).unwrap_or_else(|error| {
                                 IpcMessage::error_response(
@@ -292,12 +408,28 @@ impl IpcRequestHandler for RuntimeContext {
                     ),
                 }
             }
-            shared_contracts::METHOD_GET_AFK_AUDIT => match self.db.query_afk_audit() {
-                Ok(payload) => IpcMessage::response(&request, payload).unwrap_or_else(|error| {
-                    IpcMessage::error_response(&request, 500, format!("encode failed: {error}"))
-                }),
-                Err(error) => IpcMessage::error_response(&request, 500, error.to_string()),
-            },
+            shared_contracts::METHOD_GET_AFK_AUDIT => {
+                let parsed = serde_json::from_value::<GetAfkAuditRequest>(request.payload.clone());
+                match parsed {
+                    Ok(payload) => match self.db.query_afk_audit(&payload) {
+                        Ok(result) => {
+                            IpcMessage::response(&request, result).unwrap_or_else(|error| {
+                                IpcMessage::error_response(
+                                    &request,
+                                    500,
+                                    format!("encode failed: {error}"),
+                                )
+                            })
+                        }
+                        Err(error) => IpcMessage::error_response(&request, 500, error.to_string()),
+                    },
+                    Err(error) => IpcMessage::error_response(
+                        &request,
+                        400,
+                        format!("invalid payload: {error}"),
+                    ),
+                }
+            }
             shared_contracts::METHOD_UPSERT_AFK_WINDOW => {
                 let parsed = serde_json::from_value::<TimeRangeRequest>(request.payload.clone());
                 match parsed {
@@ -393,6 +525,10 @@ impl IpcRequestHandler for RuntimeContext {
             }
             _ => IpcMessage::error_response(&request, 404, "unsupported method"),
         }
+    }
+
+    fn on_transport_error(&self, message: &str) {
+        self.on_ipc_transport_error(message);
     }
 }
 
@@ -493,6 +629,12 @@ impl CollectorRuntime {
         while !stop_requested.load(Ordering::SeqCst) {
             if let Err(error) = self.poll_and_store() {
                 warn!("poll cycle failed: {error:#}");
+                if let Err(record_error) = self
+                    .db
+                    .increment_poll_error_count(unix_timestamp(), &error.to_string())
+                {
+                    warn!("failed to record poll error: {record_error:#}");
+                }
             }
 
             let interval = {
@@ -537,6 +679,9 @@ impl CollectorRuntime {
             warn!("failed to evaluate cap alerts after poll: {error:#}");
         }
         self.capture_afk_window(current_ts);
+        if let Err(error) = self.db.run_retention_cleanup_if_due(current_ts) {
+            warn!("failed to run retention cleanup: {error:#}");
+        }
 
         if self.config.trim_working_set {
             let _ = memory::trim_working_set();
@@ -622,8 +767,235 @@ fn resolve_observed_interval_secs(last_poll_ts: i64, current_ts: i64, fallback_s
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_observed_interval_secs, system_idle_seconds, validate_upsert_cap_request};
-    use shared_contracts::UpsertCapDefinitionRequest;
+    use super::{
+        RuntimeContext, RuntimeState, resolve_observed_interval_secs, system_idle_seconds,
+        validate_upsert_cap_request,
+    };
+    use crate::db::Db;
+    use crate::ipc::IpcRequestHandler;
+    use serde_json::json;
+    use shared_contracts::{
+        IpcMessage, METHOD_COMPACT_DATABASE, METHOD_DELETE_CAP_DEFINITION, METHOD_GET_AFK_AUDIT,
+        METHOD_GET_APP_BREAKDOWN, METHOD_GET_DAEMON_STATUS, METHOD_GET_INTERFACE_BREAKDOWN,
+        METHOD_GET_INTERFACES, METHOD_GET_SETTINGS, METHOD_GET_USAGE_SUMMARY,
+        METHOD_INGEST_ATTRIBUTED_USAGE, METHOD_LIST_CAP_ALERT_EVENTS, METHOD_LIST_CAP_DEFINITIONS,
+        METHOD_MARK_CAP_ALERT_EVENTS_DELIVERED, METHOD_SET_IMPORT_STATUS, METHOD_SET_SETTINGS,
+        METHOD_UPSERT_AFK_WINDOW, METHOD_UPSERT_CAP_DEFINITION, UpsertCapDefinitionRequest,
+    };
+    use std::sync::{Arc, Mutex};
+    use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+    fn new_runtime_context() -> RuntimeContext {
+        let mut path = std::env::temp_dir();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        path.push(format!(
+            "singularity-monitor-runtime-test-{}-{}.db",
+            std::process::id(),
+            nonce
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let db = Db::initialize(path).expect("initialize runtime test db");
+        RuntimeContext {
+            db,
+            state: Arc::new(Mutex::new(RuntimeState {
+                started_at: Instant::now(),
+                last_poll_ts: 0,
+                next_poll_ts: 0,
+                poll_interval_seconds: 60,
+                memory_bytes: 0,
+                cpu_percent_1m: 0.0,
+            })),
+            attribution_mode: "helper".to_string(),
+        }
+    }
+
+    #[test]
+    fn ipc_handlers_accept_valid_payloads_for_supported_methods() {
+        let context = new_runtime_context();
+
+        let requests = vec![
+            (METHOD_GET_DAEMON_STATUS, json!({})),
+            (METHOD_GET_SETTINGS, json!({})),
+            (
+                METHOD_GET_USAGE_SUMMARY,
+                json!({
+                    "start_ts": 0,
+                    "end_ts": 1,
+                    "granularity": "day",
+                    "interface_id": null,
+                    "interface_type": null,
+                    "app_filter": null
+                }),
+            ),
+            (
+                METHOD_GET_APP_BREAKDOWN,
+                json!({
+                    "start_ts": 0,
+                    "end_ts": 1,
+                    "interface_id": null,
+                    "interface_type": null,
+                    "limit": 10,
+                    "sort_by": "total_bytes_desc"
+                }),
+            ),
+            (
+                METHOD_SET_SETTINGS,
+                json!({
+                    "poll_interval_seconds": 60,
+                    "retention_days": 1,
+                    "afk_idle_threshold_seconds": 300,
+                    "onboarding_completed": false,
+                    "export_default_granularity": "day",
+                    "export_default_include_summary": true,
+                    "export_default_include_apps": true,
+                    "export_default_include_interfaces": true
+                }),
+            ),
+            (
+                METHOD_GET_AFK_AUDIT,
+                json!({"start_ts": null, "end_ts": null, "limit": 100}),
+            ),
+            (
+                METHOD_UPSERT_AFK_WINDOW,
+                json!({
+                    "start_ts": 10,
+                    "end_ts": 20
+                }),
+            ),
+            (
+                METHOD_INGEST_ATTRIBUTED_USAGE,
+                json!({
+                    "start_ts": 10,
+                    "end_ts": 20,
+                    "profile_name": "test",
+                    "source": "helper",
+                    "samples": []
+                }),
+            ),
+            (
+                METHOD_SET_IMPORT_STATUS,
+                json!({
+                    "status": "running",
+                    "progress_pct": 10
+                }),
+            ),
+            (METHOD_GET_INTERFACES, json!({})),
+            (
+                METHOD_GET_INTERFACE_BREAKDOWN,
+                json!({
+                    "start_ts": 0,
+                    "end_ts": 100,
+                    "interface_id": null,
+                    "interface_type": null
+                }),
+            ),
+            (METHOD_LIST_CAP_DEFINITIONS, json!({})),
+            (
+                METHOD_UPSERT_CAP_DEFINITION,
+                json!({
+                    "id": null,
+                    "scope": "global",
+                    "interface_guid": null,
+                    "monthly_cap_bytes": 1000,
+                    "is_active": true
+                }),
+            ),
+            (METHOD_DELETE_CAP_DEFINITION, json!({"id": 1})),
+            (
+                METHOD_LIST_CAP_ALERT_EVENTS,
+                json!({
+                    "start_ts": null,
+                    "end_ts": null,
+                    "scope": null,
+                    "interface_guid": null,
+                    "window_kind": null,
+                    "threshold_kind": null,
+                    "delivery_state": null,
+                    "limit": 10
+                }),
+            ),
+            (
+                METHOD_MARK_CAP_ALERT_EVENTS_DELIVERED,
+                json!({"event_ids": [1]}),
+            ),
+            (METHOD_COMPACT_DATABASE, json!({})),
+        ];
+
+        for (method, payload) in requests {
+            let request = IpcMessage::request(method, payload).expect("build ipc request");
+            let response = context.handle(request);
+            assert!(
+                response.error.is_none(),
+                "expected no error for method {method}, got {:?}",
+                response.error
+            );
+        }
+    }
+
+    #[test]
+    fn mark_cap_alert_events_delivered_rejects_invalid_event_ids() {
+        let context = new_runtime_context();
+
+        let empty_request = IpcMessage::request(
+            METHOD_MARK_CAP_ALERT_EVENTS_DELIVERED,
+            json!({"event_ids": []}),
+        )
+        .expect("build empty event_ids request");
+        let empty_response = context.handle(empty_request);
+        assert_eq!(
+            empty_response.error.as_ref().map(|error| error.code),
+            Some(400)
+        );
+
+        let non_positive_request = IpcMessage::request(
+            METHOD_MARK_CAP_ALERT_EVENTS_DELIVERED,
+            json!({"event_ids": [0, -1]}),
+        )
+        .expect("build non-positive event_ids request");
+        let non_positive_response = context.handle(non_positive_request);
+        assert_eq!(
+            non_positive_response.error.as_ref().map(|error| error.code),
+            Some(400)
+        );
+    }
+
+    #[test]
+    fn daemon_status_payload_includes_retention_and_reliability_fields() {
+        let context = new_runtime_context();
+        let request =
+            IpcMessage::request(METHOD_GET_DAEMON_STATUS, json!({})).expect("build status request");
+        let response = context.handle(request);
+        assert!(response.error.is_none());
+
+        let payload = response.payload;
+        assert!(payload.get("retention_cleanup_last_run_ts").is_some());
+        assert!(payload.get("retention_cleanup_cutoff_ts").is_some());
+        assert!(
+            payload
+                .get("retention_cleanup_deleted_usage_records")
+                .is_some()
+        );
+        assert!(
+            payload
+                .get("retention_cleanup_deleted_afk_windows")
+                .is_some()
+        );
+        assert!(payload.get("retention_cleanup_last_result").is_some());
+        assert!(payload.get("daemon_start_count").is_some());
+        assert!(payload.get("daemon_clean_exit_count").is_some());
+        assert!(payload.get("daemon_unexpected_exit_count").is_some());
+        assert!(payload.get("daemon_last_start_ts").is_some());
+        assert!(payload.get("daemon_last_exit_ts").is_some());
+        assert!(payload.get("daemon_last_error_ts").is_some());
+        assert!(payload.get("daemon_last_error_stage").is_some());
+        assert!(payload.get("daemon_last_error_message").is_some());
+        assert!(payload.get("poll_error_count").is_some());
+        assert!(payload.get("ipc_error_count").is_some());
+    }
 
     #[test]
     fn uses_fallback_when_no_previous_poll() {

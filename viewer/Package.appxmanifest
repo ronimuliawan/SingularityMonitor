@@ -8,15 +8,15 @@
   IgnorableNamespaces="uap rescap">
 
   <Identity
-    Name="9f01c263-13cc-4bc7-ab55-917b50a957d2"
-    Publisher="CN=User Name"
+    Name="SingularityMonitor.Viewer"
+    Publisher="CN=SingularityMonitor"
     Version="1.0.0.0" />
 
   <mp:PhoneIdentity PhoneProductId="9f01c263-13cc-4bc7-ab55-917b50a957d2" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
   <Properties>
-    <DisplayName>SingularityMonitor.Viewer</DisplayName>
-    <PublisherDisplayName>User Name</PublisherDisplayName>
+    <DisplayName>Singularity Monitor</DisplayName>
+    <PublisherDisplayName>Singularity Monitor</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
@@ -34,8 +34,8 @@
       Executable="$targetnametoken$.exe"
       EntryPoint="$targetentrypoint$">
       <uap:VisualElements
-        DisplayName="SingularityMonitor.Viewer"
-        Description="SingularityMonitor.Viewer"
+        DisplayName="Singularity Monitor"
+        Description="Low-overhead network monitor viewer"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png">

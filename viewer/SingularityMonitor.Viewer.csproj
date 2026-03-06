@@ -8,7 +8,11 @@
         <!-- WinUI 3 -->
         <UseWinUI>true</UseWinUI>
         <EnableMsixTooling>true</EnableMsixTooling>
-        <WindowsPackageType>None</WindowsPackageType>
+        <WindowsPackageType Condition="'$(WindowsPackageType)' == ''">None</WindowsPackageType>
+        <GenerateAppxPackageOnBuild Condition="'$(WindowsPackageType)' == 'MSIX' and '$(GenerateAppxPackageOnBuild)' == ''">true</GenerateAppxPackageOnBuild>
+        <AppxPackageSigningEnabled Condition="'$(WindowsPackageType)' == 'MSIX' and '$(AppxPackageSigningEnabled)' == ''">false</AppxPackageSigningEnabled>
+        <UapAppxPackageBuildMode Condition="'$(WindowsPackageType)' == 'MSIX' and '$(UapAppxPackageBuildMode)' == ''">SideloadOnly</UapAppxPackageBuildMode>
+        <AppxBundle Condition="'$(WindowsPackageType)' == 'MSIX' and '$(AppxBundle)' == ''">Never</AppxBundle>
 
         <!-- Project Options -->
         <Nullable>enable</Nullable>
@@ -32,6 +36,13 @@
         <Content Include="Assets\Square44x44Logo.targetsize-24_altform-unplated.png" />
         <Content Include="Assets\StoreLogo.png" />
         <Content Include="Assets\Wide310x150Logo.scale-200.png" />
+    </ItemGroup>
+
+    <ItemGroup Condition="Exists('..\target\release\helper.exe')">
+        <Content Include="..\target\release\helper.exe" Link="helper.exe">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        </Content>
     </ItemGroup>
 
     <ItemGroup>

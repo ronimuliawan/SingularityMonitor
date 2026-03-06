@@ -42,7 +42,13 @@ impl AppConfig {
 
 fn resolve_data_root() -> Result<PathBuf> {
     if let Some(explicit) = std::env::var_os("SM_DATA_ROOT") {
-        return Ok(PathBuf::from(explicit));
+        let path = PathBuf::from(explicit);
+        if !path.is_absolute() {
+            anyhow::bail!("SM_DATA_ROOT must be an absolute path");
+        }
+
+        try_create_dir(&path)?;
+        return canonicalize_dir(&path);
     }
 
     let program_data = std::env::var_os("ProgramData")
@@ -51,7 +57,7 @@ fn resolve_data_root() -> Result<PathBuf> {
     let preferred = program_data.join("SingularityMonitor");
 
     if try_create_dir(&preferred).is_ok() {
-        return Ok(preferred);
+        return canonicalize_dir(&preferred);
     }
 
     let fallback = std::env::var_os("LOCALAPPDATA")
@@ -64,12 +70,17 @@ fn resolve_data_root() -> Result<PathBuf> {
             fallback.display()
         )
     })?;
-    Ok(fallback)
+    canonicalize_dir(&fallback)
 }
 
 fn try_create_dir(path: &Path) -> Result<()> {
     std::fs::create_dir_all(path)
         .with_context(|| format!("unable to create directory {}", path.display()))
+}
+
+fn canonicalize_dir(path: &Path) -> Result<PathBuf> {
+    std::fs::canonicalize(path)
+        .with_context(|| format!("unable to canonicalize directory {}", path.display()))
 }
 
 fn read_env_u32(name: &str) -> Option<u32> {

@@ -12,26 +12,67 @@
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
-            <Color x:Key="BrandSurface">#16222B</Color>
-            <Color x:Key="BrandAccent">#2E9A8A</Color>
-            <Color x:Key="BrandWarning">#D08A2D</Color>
-            <Color x:Key="BrandText">#F5F8FA</Color>
 
-            <SolidColorBrush x:Key="BrandSurfaceBrush" Color="{StaticResource BrandSurface}" />
-            <SolidColorBrush x:Key="BrandAccentBrush" Color="{StaticResource BrandAccent}" />
-            <SolidColorBrush x:Key="BrandWarningBrush" Color="{StaticResource BrandWarning}" />
-            <SolidColorBrush x:Key="BrandTextBrush" Color="{StaticResource BrandText}" />
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Dark">
+                    <LinearGradientBrush x:Key="PageBackgroundBrush" EndPoint="1,1" StartPoint="0,0">
+                        <GradientStop Color="#13212B" Offset="0" />
+                        <GradientStop Color="#0F171F" Offset="1" />
+                    </LinearGradientBrush>
+                    <SolidColorBrush x:Key="SurfaceBrush" Color="#1F2A33" />
+                    <SolidColorBrush x:Key="ElevatedSurfaceBrush" Color="#213441" />
+                    <SolidColorBrush x:Key="IconSurfaceBrush" Color="#243744" />
+                    <SolidColorBrush x:Key="PrimaryTextBrush" Color="#F5F8FA" />
+                    <SolidColorBrush x:Key="SecondaryTextBrush" Color="#D4DCE2" />
+                    <SolidColorBrush x:Key="TertiaryTextBrush" Color="#B5C5D3" />
+                    <SolidColorBrush x:Key="StatusTextBrush" Color="#BFD0DE" />
+                    <SolidColorBrush x:Key="MutedTextBrush" Color="#9AAEBE" />
+                    <SolidColorBrush x:Key="BrandAccentBrush" Color="#2E9A8A" />
+                    <SolidColorBrush x:Key="BrandWarningBrush" Color="#D08A2D" />
+                </ResourceDictionary>
+
+                <ResourceDictionary x:Key="Light">
+                    <LinearGradientBrush x:Key="PageBackgroundBrush" EndPoint="1,1" StartPoint="0,0">
+                        <GradientStop Color="#F3F8FB" Offset="0" />
+                        <GradientStop Color="#DCEAF1" Offset="1" />
+                    </LinearGradientBrush>
+                    <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="ElevatedSurfaceBrush" Color="#EAF3F7" />
+                    <SolidColorBrush x:Key="IconSurfaceBrush" Color="#D6E6EE" />
+                    <SolidColorBrush x:Key="PrimaryTextBrush" Color="#13212B" />
+                    <SolidColorBrush x:Key="SecondaryTextBrush" Color="#243744" />
+                    <SolidColorBrush x:Key="TertiaryTextBrush" Color="#365261" />
+                    <SolidColorBrush x:Key="StatusTextBrush" Color="#2A5162" />
+                    <SolidColorBrush x:Key="MutedTextBrush" Color="#567383" />
+                    <SolidColorBrush x:Key="BrandAccentBrush" Color="#24796D" />
+                    <SolidColorBrush x:Key="BrandWarningBrush" Color="#A76814" />
+                </ResourceDictionary>
+
+                <ResourceDictionary x:Key="HighContrast">
+                    <SolidColorBrush x:Key="PageBackgroundBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="SurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="ElevatedSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="IconSurfaceBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+                    <SolidColorBrush x:Key="PrimaryTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+                    <SolidColorBrush x:Key="SecondaryTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+                    <SolidColorBrush x:Key="TertiaryTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+                    <SolidColorBrush x:Key="StatusTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+                    <SolidColorBrush x:Key="MutedTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+                    <SolidColorBrush x:Key="BrandAccentBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+                    <SolidColorBrush x:Key="BrandWarningBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
 
             <Style x:Key="HeaderTextStyle" TargetType="TextBlock">
-                <Setter Property="Foreground" Value="{StaticResource BrandTextBrush}" />
+                <Setter Property="Foreground" Value="{ThemeResource PrimaryTextBrush}" />
                 <Setter Property="FontWeight" Value="SemiBold" />
             </Style>
 
             <Style x:Key="PrimaryAction" TargetType="Button">
                 <Setter Property="Padding" Value="16,10" />
                 <Setter Property="CornerRadius" Value="6" />
-                <Setter Property="Background" Value="{StaticResource BrandAccentBrush}" />
-                <Setter Property="Foreground" Value="White" />
+                <Setter Property="Background" Value="{ThemeResource BrandAccentBrush}" />
+                <Setter Property="Foreground" Value="{ThemeResource TextOnAccentFillColorPrimaryBrush}" />
             </Style>
         </ResourceDictionary>
     </Application.Resources>

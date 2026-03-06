@@ -27,7 +27,22 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Build viewer (Release)
-        run: dotnet build "viewer/SingularityMonitor.Viewer.csproj" -c Release
+        run: dotnet build "viewer/SingularityMonitor.Viewer.csproj" -c Release -p:Platform=x64
+
+      - name: Publish viewer MSIX (unsigned)
+        shell: powershell
+        run: >
+          powershell -ExecutionPolicy Bypass -File scripts/release-msix.ps1
+          -BundleHelperRelease
+          -RuntimeIdentifier win-x64
+          -Version 1.0.0.0
+
+      - name: Upload viewer MSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewer-msix-unsigned
+          path: viewer/AppPackages/**
+          if-no-files-found: error
 
       - name: Run R-02 baseline performance gates
         shell: powershell

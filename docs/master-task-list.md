@@ -18,9 +18,9 @@ This is the single source of truth for completed work and remaining work to reac
 
 ## Progress Snapshot
 
-- Completed tasks: `55`
-- Remaining tasks: `16`
-- Current focus: `P1 alert delivery + AFK UI + release hardening`
+- Completed tasks: `67`
+- Remaining tasks: `3`
+- Current focus: `Release distribution rehearsal and sign-off`
 
 ---
 
@@ -93,13 +93,13 @@ This is the single source of truth for completed work and remaining work to reac
 | P1-01 | Cap definition model (monthly/global/per-interface) in DB + UI | DONE | Rust Eng + C# Eng | High | M5 | None | P0-18 |
 | P1-02 | Alert threshold engine (50/80/95 + daily cap) | DONE | Rust Eng | High | M5 | P1-01 | None |
 | P1-03 | Alert history persistence + viewer tab | DONE | Rust Eng + C# Eng | High | M5 | P1-02 | P1-01 |
-| P1-04 | Reliable toast notifications while viewer closed | TODO | C# Eng + Rust Eng | High | M5 | P1-02 | P1-03 |
+| P1-04 | Reliable toast notifications while viewer closed | DONE | C# Eng + Rust Eng | High | M5 | P1-02 | P1-03 |
 | P1-05 | AFK detection pipeline (`WTSQuerySessionInformation` + idle threshold) | DONE | Rust Eng | High | M5 | None | P0-03 |
 | P1-06 | AFK audit query and usage joins | DONE | Rust Eng | High | M5 | P1-05 | None |
-| P1-07 | AFK timeline UI + AFK-only filter | TODO | C# Eng | Medium | M5 | P1-06 | P0-10 |
-| P1-08 | AFK CSV export flow | TODO | C# Eng | Medium | M5 | P1-07 | None |
-| P1-09 | Retention policy UI wiring and daemon cleanup scheduler | TODO | Rust Eng + C# Eng | High | M5 | None | P0-17 |
-| P1-10 | Database size display + manual compact (VACUUM) action | TODO | Rust Eng + C# Eng | Medium | M5 | P1-09 | None |
+| P1-07 | AFK timeline UI + AFK-only filter | DONE | C# Eng | Medium | M5 | P1-06 | P0-10 |
+| P1-08 | AFK CSV export flow | DONE | C# Eng | Medium | M5 | P1-07 | None |
+| P1-09 | Retention policy UI wiring and daemon cleanup scheduler | DONE | Rust Eng + C# Eng | High | M5 | None | P0-17 |
+| P1-10 | Database size display + manual compact (VACUUM) action | DONE | Rust Eng + C# Eng | Medium | M5 | P1-09 | None |
 
 ## 2.3 P2 Feature Completion
 
@@ -120,15 +120,15 @@ This is the single source of truth for completed work and remaining work to reac
 |---|---|---|---|---|---|---|---|
 | R-01 | CI pipeline for Rust and viewer builds | DONE | DevOps | Critical | M7 | None | None |
 | R-02 | Automated performance gates (RSS, CPU, import duration, query latency) | DONE | QA + DevOps | Critical | M7 | R-01 | P0-16 |
-| R-03 | IPC contract and schema migration integration tests | TODO | Rust Eng + QA | High | M7 | R-01 | None |
-| R-04 | Crash reporting scaffolding and reliability metrics | TODO | Rust Eng | High | M7 | None | R-03 |
-| R-05 | MSIX packaging and capability manifest finalization | TODO | DevOps + C# Eng | Critical | M7 | R-01 | None |
-| R-06 | Signing workflow integration for release artifacts | TODO | DevOps | High | M7 | R-05 | None |
-| R-07 | Winget manifest prep + install/upgrade/uninstall validation | TODO | DevOps + QA | High | M7 | R-05, R-06 | None |
-| R-08 | Accessibility audit (keyboard, narrator, focus flow) | TODO | C# Eng + QA | High | M7 | None | P0-08, P0-10 |
-| R-09 | User docs finalization (install, usage, troubleshooting) | TODO | PM/Design | Medium | M7 | None | P0-17 |
-| R-10 | Full QA matrix on Win11 versions + hardware profiles | TODO | QA | Critical | M7 | R-01, R-02, R-03 | R-08 |
-| R-11 | Security review of pipe ACLs, local data permissions, export paths | TODO | Rust Eng + QA | High | M7 | None | R-03 |
+| R-03 | IPC contract and schema migration integration tests | DONE | Rust Eng + QA | High | M7 | R-01 | None |
+| R-04 | Crash reporting scaffolding and reliability metrics | DONE | Rust Eng | High | M7 | None | R-03 |
+| R-05 | MSIX packaging and capability manifest finalization | DONE | DevOps + C# Eng | Critical | M7 | R-01 | None |
+| R-06 | Signing workflow integration for release artifacts | DONE | DevOps | High | M7 | R-05 | None |
+| R-07 | Winget manifest prep + install/upgrade/uninstall validation | IN_PROGRESS | DevOps + QA | High | M7 | R-05, R-06 | None |
+| R-08 | Accessibility audit (keyboard, narrator, focus flow) | DONE | C# Eng + QA | High | M7 | None | P0-08, P0-10 |
+| R-09 | User docs finalization (install, usage, troubleshooting) | DONE | PM/Design | Medium | M7 | None | P0-17 |
+| R-10 | Full QA matrix on Win11 versions + hardware profiles | IN_PROGRESS | QA | Critical | M7 | R-01, R-02, R-03 | R-08 |
+| R-11 | Security review of pipe ACLs, local data permissions, export paths | DONE | Rust Eng + QA | High | M7 | None | R-03 |
 | R-12 | Go/no-go checklist and launch readiness sign-off | TODO | PM/Design + QA + Eng | Critical | M7 | R-05, R-06, R-07, R-10, R-11 | R-09 |
 
 ---
@@ -137,19 +137,13 @@ This is the single source of truth for completed work and remaining work to reac
 
 | Step | Task ID | Dependency Gate | Blocker Type | Why Now |
 |---|---|---|---|---|
-| 1 | P1-04 | `P1-02` (DONE), `P1-03` (DONE) | HARD | Reliable toast delivery is now the primary remaining alerts dependency |
-| 2 | P1-07 | `P1-06` (DONE) | HARD | AFK timeline UI is fully unblocked and can proceed in parallel |
-| 3 | P1-08 | `P1-07` | HARD | AFK export flow follows AFK timeline/filter behavior |
-| 4 | P1-09 | `P0-17` (DONE) | SOFT | Retention scheduling should land before long-run QA and DB size controls |
-| 5 | P1-10 | `P1-09` | HARD | DB compact controls depend on retention scheduler and status wiring |
-| 6 | R-03 | `R-01` (DONE) | HARD | Contract/schema integration tests should be automated early in hardening |
-| 7 | R-05 | `R-01` (DONE) | HARD | Packaging work can proceed now that baseline CI exists |
-| 8 | R-08 | None | SOFT | Accessibility issues should be surfaced before final QA matrix and go/no-go |
-| 9 | R-10 | `R-01`, `R-02` (DONE), `R-03` | HARD | Full QA matrix is the primary launch-readiness validation gate |
+| 1 | R-07 | `R-05` (DONE), `R-06` (DONE) | HARD | Winget manifests are generated and validated; signed install/upgrade/uninstall rehearsal is the remaining distribution gate |
+| 2 | R-10 | `R-01`, `R-02` (DONE), `R-03` (DONE) | HARD | QA matrix documentation is live; target-hardware execution remains the main launch-readiness validation gate |
+| 3 | R-12 | `R-05` (DONE), `R-06` (DONE), `R-07`, `R-10`, `R-11` (DONE) | HARD | Launch sign-off remains the final project gate after distribution and QA evidence is complete |
 
 Workflow notes:
-- `P1-04` and `P1-07` can run in parallel now that `P1-03` is complete.
-- `R-03` and `R-05` can proceed in parallel after `R-01`.
+- `R-07` now depends mostly on a signed-package rehearsal path and public installer URL selection.
+- `R-10` and `R-12` remain the final QA and launch gates after signed distribution rehearsal finishes.
 
 ---
 

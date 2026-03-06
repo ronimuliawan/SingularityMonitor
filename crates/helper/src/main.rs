@@ -4,8 +4,9 @@ use shared_contracts::{
     AttributedUsageSample, IngestAttributedUsageRequest, IngestAttributedUsageResponse, IpcMessage,
     MessageType, SetImportStatusRequest,
 };
-use std::fs::OpenOptions;
+use std::fs::{OpenOptions, create_dir_all};
 use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 use windows::Foundation::DateTime;
@@ -56,9 +57,16 @@ enum Mode {
 }
 
 fn main() {
-    if let Err(error) = run() {
-        eprintln!("helper failed: {error:#}");
-        std::process::exit(1);
+    append_reliability_event("start", "main", "helper process initialized");
+    match run() {
+        Ok(()) => {
+            append_reliability_event("clean_exit", "main", "helper exited cleanly");
+        }
+        Err(error) => {
+            append_reliability_event("error", "main", &format!("{error:#}"));
+            eprintln!("helper failed: {error:#}");
+            std::process::exit(1);
+        }
     }
 }
 
@@ -340,6 +348,42 @@ fn unix_timestamp() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     i64::try_from(now.as_secs()).unwrap_or(i64::MAX)
+}
+
+fn append_reliability_event(kind: &str, stage: &str, message: &str) {
+    let path = resolve_reliability_log_path();
+    if let Some(parent) = path.parent() {
+        let _ = create_dir_all(parent);
+    }
+
+    let payload = serde_json::json!({
+        "ts": unix_timestamp(),
+        "kind": kind,
+        "stage": stage,
+        "message": message,
+    });
+
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{}", payload);
+    }
+}
+
+fn resolve_reliability_log_path() -> PathBuf {
+    if let Some(explicit) = std::env::var_os("SM_DATA_ROOT") {
+        return PathBuf::from(explicit).join("helper-reliability.jsonl");
+    }
+
+    if let Some(program_data) = std::env::var_os("ProgramData") {
+        return PathBuf::from(program_data)
+            .join("SingularityMonitor")
+            .join("helper-reliability.jsonl");
+    }
+
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("SingularityMonitorDev")
+        .join("helper-reliability.jsonl")
 }
 
 fn unix_to_winrt(unix_ts: i64) -> DateTime {
