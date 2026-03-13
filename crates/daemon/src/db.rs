@@ -1,16 +1,19 @@
 use crate::delta::InterfaceDelta;
 use crate::poller::InterfaceSnapshot;
+use crate::time::unix_timestamp;
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, named_params, params};
 use shared_contracts::{
-    AfkAuditResponse, AfkWindowUsage, AppBreakdownRequest, AppBreakdownResponse, AppUsageRow,
-    CapAlertEvent, CapDefinition, CompactDatabaseResponse, DeleteCapDefinitionRequest,
-    DeleteCapDefinitionResponse, GetAfkAuditRequest, GetInterfacesResponse,
+    AfkAuditResponse, AfkWindowUsage, AnomaliesResponse, AnomalyRow, AppBreakdownRequest,
+    AppBreakdownResponse, AppUsageRow, CapAlertEvent, CapDefinition, CompactDatabaseResponse,
+    DeleteCapDefinitionRequest, DeleteCapDefinitionResponse, ForecastResponse, GetAfkAuditRequest,
+    GetAnomaliesRequest, GetForecastRequest, GetInterfacesResponse, HeatmapCell,
     IngestAttributedUsageRequest, IngestAttributedUsageResponse, InterfaceBreakdownRequest,
     InterfaceBreakdownResponse, InterfaceInfo, InterfaceUsageRow, ListCapAlertEventsRequest,
     ListCapAlertEventsResponse, ListCapDefinitionsResponse, MarkCapAlertEventsDeliveredResponse,
     SetSettingsRequest, SettingsResponse, UpsertCapDefinitionRequest, UpsertCapDefinitionResponse,
-    UsageBucket, UsageSummaryRequest, UsageSummaryResponse,
+    UsageBucket, UsageHeatmapRequest, UsageHeatmapResponse, UsageSummaryRequest,
+    UsageSummaryResponse,
 };
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -32,6 +35,8 @@ const RETENTION_KEY_CUTOFF_TS: &str = "retention_cleanup_cutoff_ts";
 const RETENTION_KEY_DELETED_USAGE_RECORDS: &str = "retention_cleanup_deleted_usage_records";
 const RETENTION_KEY_DELETED_AFK_WINDOWS: &str = "retention_cleanup_deleted_afk_windows";
 const RETENTION_KEY_LAST_RESULT: &str = "retention_cleanup_last_result";
+const HOURLY_AGGREGATION_KEY_LAST_RUN_TS: &str = "hourly_aggregation_last_run_ts";
+const HOURLY_AGGREGATION_KEY_LAST_HOUR_TS: &str = "hourly_aggregation_last_hour_ts";
 const RELIABILITY_KEY_SESSION_OPEN: &str = "daemon_reliability_session_open";
 const RELIABILITY_KEY_START_COUNT: &str = "daemon_reliability_start_count";
 const RELIABILITY_KEY_CLEAN_EXIT_COUNT: &str = "daemon_reliability_clean_exit_count";
@@ -43,6 +48,11 @@ const RELIABILITY_KEY_LAST_ERROR_STAGE: &str = "daemon_reliability_last_error_st
 const RELIABILITY_KEY_LAST_ERROR_MESSAGE: &str = "daemon_reliability_last_error_message";
 const RELIABILITY_KEY_POLL_ERROR_COUNT: &str = "daemon_reliability_poll_error_count";
 const RELIABILITY_KEY_IPC_ERROR_COUNT: &str = "daemon_reliability_ipc_error_count";
+const IMPORT_KEY_START_TS: &str = "import_range_start_ts";
+const IMPORT_KEY_END_TS: &str = "import_range_end_ts";
+const IMPORT_KEY_TOTAL_SENT: &str = "import_total_sent";
+const IMPORT_KEY_TOTAL_RECV: &str = "import_total_recv";
+const HELPER_KEY_START_TS: &str = "helper_start_ts";
 
 #[derive(Clone)]
 pub struct Db {
@@ -132,6 +142,7 @@ impl Db {
             read_setting_bool(&conn, "export_default_include_apps")?.unwrap_or(true);
         let export_default_include_interfaces =
             read_setting_bool(&conn, "export_default_include_interfaces")?.unwrap_or(true);
+        let cost_per_gb = read_setting_f64(&conn, "cost_per_gb")?.unwrap_or(0.0);
 
         Ok(SettingsResponse {
             poll_interval_seconds,
@@ -142,6 +153,7 @@ impl Db {
             export_default_include_summary,
             export_default_include_apps,
             export_default_include_interfaces,
+            cost_per_gb,
         })
     }
 
@@ -319,6 +331,72 @@ impl Db {
         Ok(())
     }
 
+    pub fn run_hourly_aggregation_if_due(&self, now_ts: i64) -> Result<()> {
+        if now_ts <= 0 {
+            return Ok(());
+        }
+
+        let mut conn = self.open_connection()?;
+        let last_hour_ts =
+            read_setting_i64(&conn, HOURLY_AGGREGATION_KEY_LAST_HOUR_TS)?.unwrap_or(0);
+        let current_hour_start = utc_hour_start_ts(now_ts);
+
+        if last_hour_ts >= current_hour_start - 3600 {
+            return Ok(());
+        }
+
+        let start_from = if last_hour_ts == 0 {
+            conn.query_row("SELECT MIN(ts) FROM usage_records", [], |row| {
+                row.get::<_, Option<i64>>(0)
+            })?
+            .map(utc_hour_start_ts)
+            .unwrap_or(current_hour_start)
+        } else {
+            last_hour_ts + 3600
+        };
+
+        if start_from >= current_hour_start {
+            return Ok(());
+        }
+
+        let tx = conn.transaction()?;
+        tx.execute(
+            "
+            INSERT INTO usage_hourly (ts, app_id, interface_id, bytes_sent, bytes_recv, source)
+            SELECT
+                (ts / 3600) * 3600 as hour_ts,
+                app_id,
+                interface_id,
+                SUM(bytes_sent),
+                SUM(bytes_recv),
+                source
+            FROM usage_records
+            WHERE ts >= ?1 AND ts < ?2
+            GROUP BY hour_ts, app_id, interface_id, source
+            ON CONFLICT(ts, app_id, interface_id, source) DO UPDATE SET
+                bytes_sent = excluded.bytes_sent,
+                bytes_recv = excluded.bytes_recv
+            ",
+            params![start_from, current_hour_start],
+        )?;
+
+        upsert_setting(
+            &tx,
+            HOURLY_AGGREGATION_KEY_LAST_HOUR_TS,
+            &(current_hour_start - 3600).to_string(),
+            now_ts,
+        )?;
+        upsert_setting(
+            &tx,
+            HOURLY_AGGREGATION_KEY_LAST_RUN_TS,
+            &now_ts.to_string(),
+            now_ts,
+        )?;
+
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn apply_settings(&self, ts: i64, settings: &SetSettingsRequest) -> Result<()> {
         let mut conn = self.open_connection()?;
         let tx = conn.transaction()?;
@@ -420,6 +498,19 @@ impl Db {
                 "
                 INSERT INTO settings(key, value, updated_at)
                 VALUES('export_default_include_interfaces', ?1, ?2)
+                ON CONFLICT(key)
+                DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                ",
+                params![value, ts],
+            )?;
+        }
+
+        if let Some(cost) = settings.cost_per_gb {
+            let value = cost.max(0.0).to_string();
+            tx.execute(
+                "
+                INSERT INTO settings(key, value, updated_at)
+                VALUES('cost_per_gb', ?1, ?2)
                 ON CONFLICT(key)
                 DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
                 ",
@@ -567,6 +658,22 @@ impl Db {
             Some("import") => "import",
             _ => "helper",
         };
+
+        if source == "import" {
+            let import_total_sent = payload.aggregate_sent.unwrap_or(0);
+            let import_total_recv = payload.aggregate_recv.unwrap_or(0);
+            set_import_range(
+                &tx,
+                payload.start_ts,
+                payload.end_ts,
+                import_total_sent,
+                import_total_recv,
+                payload.end_ts,
+            )?;
+        } else {
+            set_helper_start_ts(&tx, payload.start_ts, payload.end_ts)?;
+        }
+
         let mut accepted = 0u32;
         let mut dropped = 0u32;
 
@@ -618,35 +725,34 @@ impl Db {
     pub fn query_usage_summary(&self, req: &UsageSummaryRequest) -> Result<UsageSummaryResponse> {
         let conn = self.open_connection()?;
         let bucket_secs = granularity_to_seconds(&req.granularity);
+        let use_hourly = bucket_secs >= 3600;
+        let table_name = if use_hourly {
+            "usage_hourly"
+        } else {
+            "usage_records"
+        };
+
         if let Some(app_filter) = req.app_filter.as_deref() {
-            let mut stmt = conn.prepare(
+            let mut stmt = conn.prepare(&format!(
                 "
-                WITH helper_cutover AS (
-                    SELECT MIN(ts) AS ts
-                    FROM usage_records
-                    WHERE source = 'helper'
-                )
                 SELECT
                     (ur.ts / :bucket) * :bucket AS bucket_ts,
                     SUM(ur.bytes_sent) AS sent,
                     SUM(ur.bytes_recv) AS recv
-                FROM usage_records ur
+                FROM {table_name} ur
                 JOIN interfaces i ON i.id = ur.interface_id
                 JOIN apps a ON a.id = ur.app_id
-                CROSS JOIN helper_cutover hc
                 WHERE ur.ts >= :start_ts
                   AND ur.ts < :end_ts
                   AND a.process_name = :app_filter
                   AND (:interface_id IS NULL OR i.guid = :interface_id)
                   AND (:interface_type IS NULL OR i.type = :interface_type)
-                  AND (
-                      ur.source = 'helper'
-                      OR (ur.source = 'import' AND (hc.ts IS NULL OR ur.ts < hc.ts))
-                  )
+                  AND ur.source IN ('import', 'helper')
                 GROUP BY bucket_ts
                 ORDER BY bucket_ts ASC
                 ",
-            )?;
+                table_name = table_name
+            ))?;
 
             let rows = stmt.query_map(
                 named_params! {
@@ -684,42 +790,24 @@ impl Db {
             });
         }
 
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(&format!(
             "
-            WITH poll_cutover AS (
-                SELECT MIN(candidate_ts) AS ts
-                FROM (
-                    SELECT MIN(ts) AS candidate_ts
-                    FROM usage_records
-                    WHERE source IN ('interface_poll', 'poll')
-
-                    UNION ALL
-
-                    SELECT MIN(last_seen) AS candidate_ts
-                    FROM interfaces
-                    WHERE guid <> '{11111111-1111-1111-1111-111111111111}'
-                ) cutover_candidates
-                WHERE candidate_ts IS NOT NULL
-            )
             SELECT
                 (ur.ts / :bucket) * :bucket AS bucket_ts,
                 SUM(ur.bytes_sent) AS sent,
                 SUM(ur.bytes_recv) AS recv
-            FROM usage_records ur
+            FROM {table_name} ur
             JOIN interfaces i ON i.id = ur.interface_id
-            CROSS JOIN poll_cutover pc
             WHERE ur.ts >= :start_ts
               AND ur.ts < :end_ts
               AND (:interface_id IS NULL OR i.guid = :interface_id)
               AND (:interface_type IS NULL OR i.type = :interface_type)
-              AND (
-                  ur.source IN ('interface_poll', 'poll')
-                  OR (ur.source = 'import' AND (pc.ts IS NULL OR ur.ts < pc.ts))
-              )
+              AND ur.source IN ('import', 'helper')
             GROUP BY bucket_ts
             ORDER BY bucket_ts ASC
             ",
-        )?;
+            table_name = table_name
+        ))?;
 
         let rows = stmt.query_map(
             named_params! {
@@ -760,35 +848,34 @@ impl Db {
         let conn = self.open_connection()?;
         let limit = req.limit.unwrap_or(50).min(500);
         let order_by = resolve_app_breakdown_order_by(req.sort_by.as_deref());
+        let use_hourly = (req.end_ts - req.start_ts) > 72 * 3600;
+        let table_name = if use_hourly {
+            "usage_hourly"
+        } else {
+            "usage_records"
+        };
         let sql = format!(
             "
-            WITH helper_cutover AS (
-                SELECT MIN(ts) AS ts
-                FROM usage_records
-                WHERE source = 'helper'
-            )
             SELECT
                 a.process_name,
                 COALESCE(a.display_name, a.process_name) AS display_name,
                 SUM(ur.bytes_sent) AS sent,
                 SUM(ur.bytes_recv) AS recv,
                 MAX(ur.ts) AS last_seen
-            FROM usage_records ur
+            FROM {table_name} ur
             JOIN apps a ON a.id = ur.app_id
             JOIN interfaces i ON i.id = ur.interface_id
-            CROSS JOIN helper_cutover hc
             WHERE ur.ts >= :start_ts
               AND ur.ts < :end_ts
               AND (:interface_id IS NULL OR i.guid = :interface_id)
               AND (:interface_type IS NULL OR i.type = :interface_type)
-              AND (
-                  ur.source = 'helper'
-                  OR (ur.source = 'import' AND (hc.ts IS NULL OR ur.ts < hc.ts))
-              )
+              AND ur.source IN ('import', 'helper')
             GROUP BY a.id, a.process_name, display_name
             ORDER BY {order_by}
             LIMIT :limit
-            "
+            ",
+            table_name = table_name,
+            order_by = order_by
         );
         let mut stmt = conn.prepare(&sql)?;
 
@@ -816,6 +903,286 @@ impl Db {
             total_apps: apps.len() as u32,
             apps,
         })
+    }
+
+    pub fn query_usage_heatmap(&self, req: &UsageHeatmapRequest) -> Result<UsageHeatmapResponse> {
+        let conn = self.open_connection()?;
+        let mut sql = "
+            WITH poll_cutover AS (
+                SELECT MIN(candidate_ts) AS ts
+                FROM (
+                    SELECT MIN(ts) AS candidate_ts
+                    FROM usage_records
+                    WHERE source IN ('interface_poll', 'poll')
+                    UNION ALL
+                    SELECT MIN(last_seen) AS candidate_ts
+                    FROM interfaces
+                    WHERE guid <> '{11111111-1111-1111-1111-111111111111}'
+                ) cutover_candidates
+                WHERE candidate_ts IS NOT NULL
+            ),
+            helper_cutover AS (
+                SELECT MIN(ts) AS ts
+                FROM usage_records
+                WHERE source = 'helper'
+            )
+            SELECT
+                CAST(strftime('%w', ur.ts, 'unixepoch') AS INTEGER) as dow,
+                CAST(strftime('%H', ur.ts, 'unixepoch') AS INTEGER) as hod,
+                SUM(ur.bytes_sent + ur.bytes_recv) as total
+            FROM usage_hourly ur
+            JOIN interfaces i ON i.id = ur.interface_id
+            CROSS JOIN poll_cutover pc
+            CROSS JOIN helper_cutover hc
+            WHERE ur.ts >= :start_ts AND ur.ts < :end_ts
+        "
+        .to_string();
+
+        if let Some(_app) = &req.app_filter {
+            sql.push_str(" AND ur.app_id = (SELECT id FROM apps WHERE process_name = :app_filter)");
+            sql.push_str(" AND (ur.source = 'helper' OR (ur.source = 'import' AND (hc.ts IS NULL OR ur.ts < hc.ts)))");
+        } else {
+            sql.push_str(" AND (ur.source IN ('interface_poll', 'poll') OR (ur.source = 'import' AND (pc.ts IS NULL OR ur.ts < pc.ts)))");
+        }
+
+        if let Some(_guid) = &req.interface_id {
+            sql.push_str(" AND i.guid = :interface_id");
+        }
+        if let Some(_itype) = &req.interface_type {
+            sql.push_str(" AND i.type = :interface_type");
+        }
+
+        sql.push_str(" GROUP BY dow, hod ORDER BY dow, hod");
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(
+            named_params! {
+                ":start_ts": req.start_ts,
+                ":end_ts": req.end_ts,
+                ":app_filter": req.app_filter,
+                ":interface_id": req.interface_id,
+                ":interface_type": req.interface_type,
+            },
+            |row| {
+                Ok(HeatmapCell {
+                    day_of_week: row.get::<_, i64>(0)? as u32,
+                    hour_of_day: row.get::<_, i64>(1)? as u32,
+                    bytes_total: row.get::<_, i64>(2)?.max(0) as u64,
+                })
+            },
+        )?;
+
+        let cells = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(UsageHeatmapResponse { cells })
+    }
+
+    pub fn query_forecast(&self, req: &GetForecastRequest) -> Result<ForecastResponse> {
+        let conn = self.open_connection()?;
+        let now = unix_timestamp();
+        let day_secs = 24 * 3600;
+        let start_ts = now - 14 * day_secs;
+
+        let mut sql = "
+            SELECT
+                (ts / 86400) * 86400 as day_ts,
+                SUM(bytes_sent + bytes_recv) as total
+            FROM usage_hourly ur
+            JOIN interfaces i ON i.id = ur.interface_id
+            WHERE ur.ts >= :start_ts AND ur.ts < :now
+        "
+        .to_string();
+
+        if let Some(_guid) = &req.interface_id {
+            sql.push_str(" AND i.guid = :interface_id");
+        }
+        if let Some(_itype) = &req.interface_type {
+            sql.push_str(" AND i.type = :interface_type");
+        }
+        sql.push_str(" AND (ur.source IN ('interface_poll', 'poll') OR ur.source = 'helper')");
+        sql.push_str(" GROUP BY day_ts ORDER BY day_ts ASC");
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(
+            named_params! {
+                ":start_ts": start_ts,
+                ":now": now,
+                ":interface_id": req.interface_id,
+                ":interface_type": req.interface_type,
+            },
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?.max(0) as u64)),
+        )?;
+
+        let data: Vec<(i64, u64)> = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+        if data.is_empty() {
+            return Ok(ForecastResponse {
+                projected_month_end_bytes: 0,
+                daily_average_bytes: 0,
+                confidence_interval_low: 0,
+                confidence_interval_high: 0,
+                projected_month_end_cost: 0.0,
+            });
+        }
+
+        let n = data.len() as f64;
+        let mut sum_x = 0.0;
+        let mut sum_y = 0.0;
+        let mut sum_xx = 0.0;
+        let mut sum_xy = 0.0;
+
+        for (i, (_ts, bytes)) in data.iter().enumerate() {
+            let x = i as f64;
+            let y = *bytes as f64;
+            sum_x += x;
+            sum_y += y;
+            sum_xx += x * x;
+            sum_xy += x * y;
+        }
+
+        let denominator = n * sum_xx - sum_x * sum_x;
+        let m = if denominator.abs() < 1e-9 {
+            0.0
+        } else {
+            (n * sum_xy - sum_x * sum_y) / denominator
+        };
+        let b = (sum_y - m * sum_x) / n;
+
+        let month_start = utc_month_start_ts(&conn, now)?;
+        let usage_so_far = self.get_usage_for_range(
+            &conn,
+            month_start,
+            now,
+            req.interface_id.as_deref(),
+            req.interface_type.as_deref(),
+        )?;
+
+        let days_passed = ((now - month_start) as f64 / day_secs as f64).max(0.1);
+        let days_in_month = 30.44; // average days in month
+        let days_remaining = (days_in_month - days_passed).max(0.0f64);
+
+        let trended_today = m * n + b;
+        let projected_remaining = (trended_today.max(0.0) * days_remaining) as u64;
+        let projected_total = usage_so_far.saturating_add(projected_remaining);
+
+        let cost_per_gb = self.get_settings()?.cost_per_gb;
+        let projected_cost = (projected_total as f64 / (1024.0 * 1024.0 * 1024.0)) * cost_per_gb;
+
+        Ok(ForecastResponse {
+            projected_month_end_bytes: projected_total,
+            daily_average_bytes: (sum_y / n) as u64,
+            confidence_interval_low: (projected_total as f64 * 0.85) as u64,
+            confidence_interval_high: (projected_total as f64 * 1.15) as u64,
+            projected_month_end_cost: projected_cost,
+        })
+    }
+
+    fn get_usage_for_range(
+        &self,
+        conn: &Connection,
+        start_ts: i64,
+        end_ts: i64,
+        interface_id: Option<&str>,
+        interface_type: Option<&str>,
+    ) -> Result<u64> {
+        let mut sql = "
+            SELECT SUM(bytes_sent + bytes_recv)
+            FROM usage_hourly ur
+            JOIN interfaces i ON i.id = ur.interface_id
+            WHERE ur.ts >= :start_ts AND ur.ts < :end_ts
+        "
+        .to_string();
+
+        if let Some(_guid) = interface_id {
+            sql.push_str(" AND i.guid = :interface_id");
+        }
+        if let Some(_itype) = interface_type {
+            sql.push_str(" AND i.type = :interface_type");
+        }
+        sql.push_str(" AND (ur.source IN ('interface_poll', 'poll') OR ur.source = 'helper')");
+
+        let mut stmt = conn.prepare(&sql)?;
+        let total = stmt.query_row(
+            named_params! {
+                ":start_ts": start_ts,
+                ":end_ts": end_ts,
+                ":interface_id": interface_id,
+                ":interface_type": interface_type,
+            },
+            |row| row.get::<_, Option<i64>>(0),
+        )?;
+
+        Ok(total.unwrap_or(0).max(0) as u64)
+    }
+
+    pub fn query_anomalies(&self, req: &GetAnomaliesRequest) -> Result<AnomaliesResponse> {
+        let conn = self.open_connection()?;
+        let baseline_secs = 30 * 24 * 3600;
+
+        let sql = "
+            WITH hourly_data AS (
+                SELECT
+                    ts,
+                    app_id,
+                    SUM(bytes_sent + bytes_recv) as total
+                FROM usage_hourly
+                WHERE ts >= :start_ts AND ts < :end_ts
+                GROUP BY ts, app_id
+            ),
+            baseline AS (
+                SELECT
+                    app_id,
+                    AVG(bytes_sent + bytes_recv) as avg_total,
+                    AVG((bytes_sent + bytes_recv) * (bytes_sent + bytes_recv)) - AVG(bytes_sent + bytes_recv) * AVG(bytes_sent + bytes_recv) as var_total
+                FROM usage_hourly
+                WHERE ts >= (:start_ts - :baseline_secs) AND ts < :start_ts
+                GROUP BY app_id
+            )
+            SELECT
+                h.ts,
+                a.process_name,
+                h.total,
+                b.avg_total,
+                b.var_total
+            FROM hourly_data h
+            JOIN apps a ON a.id = h.app_id
+            JOIN baseline b ON b.app_id = h.app_id
+            WHERE (h.total - b.avg_total) * (h.total - b.avg_total) > 9 * b.var_total
+              AND h.total > b.avg_total
+              AND h.total > 1048576 -- Only report anomalies > 1MB
+            ORDER BY h.ts DESC
+        ";
+
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt.query_map(
+            named_params! {
+                ":start_ts": req.start_ts,
+                ":end_ts": req.end_ts,
+                ":baseline_secs": baseline_secs,
+            },
+            |row| {
+                let ts = row.get::<_, i64>(0)?;
+                let app_id = row.get::<_, String>(1)?;
+                let total = row.get::<_, i64>(2)? as u64;
+                let avg = row.get::<_, f64>(3)?;
+                let var = row.get::<_, f64>(4)?;
+                let stddev = var.sqrt();
+                let z_score = if stddev > 0.0 {
+                    (total as f64 - avg) / stddev
+                } else {
+                    0.0
+                };
+
+                Ok(AnomalyRow {
+                    ts,
+                    app_id,
+                    bytes_total: total,
+                    expected_bytes: avg as u64,
+                    z_score,
+                })
+            },
+        )?;
+
+        let anomalies = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(AnomaliesResponse { anomalies })
     }
 
     pub fn query_interfaces(&self) -> Result<GetInterfacesResponse> {
@@ -846,7 +1213,13 @@ impl Db {
         req: &InterfaceBreakdownRequest,
     ) -> Result<InterfaceBreakdownResponse> {
         let conn = self.open_connection()?;
-        let mut stmt = conn.prepare(
+        let use_hourly = (req.end_ts - req.start_ts) > 72 * 3600;
+        let table_name = if use_hourly {
+            "usage_hourly"
+        } else {
+            "usage_records"
+        };
+        let mut stmt = conn.prepare(&format!(
             "
             SELECT
                 i.guid,
@@ -855,7 +1228,7 @@ impl Db {
                 i.is_metered,
                 SUM(ur.bytes_sent) AS sent,
                 SUM(ur.bytes_recv) AS recv
-            FROM usage_records ur
+            FROM {table_name} ur
             JOIN interfaces i ON i.id = ur.interface_id
             WHERE ur.ts >= :start_ts
               AND ur.ts < :end_ts
@@ -865,7 +1238,8 @@ impl Db {
             GROUP BY i.id, i.guid, i.name, i.type, i.is_metered
             ORDER BY (sent + recv) DESC
             ",
-        )?;
+            table_name = table_name
+        ))?;
 
         let rows = stmt.query_map(
             named_params! {
@@ -1535,6 +1909,7 @@ fn sqlite_storage_size_bytes(base_path: &Path) -> u64 {
 
 fn normalize_granularity(granularity: &str) -> &str {
     match granularity.trim().to_ascii_lowercase().as_str() {
+        "minute" => "minute",
         "hour" => "hour",
         "week" => "week",
         "month" => "month",
@@ -1744,6 +2119,10 @@ fn utc_day_start_ts(now_ts: i64) -> i64 {
     now_ts - now_ts.rem_euclid(24 * 3600)
 }
 
+fn utc_hour_start_ts(now_ts: i64) -> i64 {
+    now_ts - now_ts.rem_euclid(3600)
+}
+
 fn threshold_bytes_for_percent(cap_bytes: u64, percent: u64) -> u64 {
     if cap_bytes == 0 || percent == 0 {
         return 0;
@@ -1790,6 +2169,7 @@ fn normalize_cap_interface_guid(
 
 fn granularity_to_seconds(granularity: &str) -> i64 {
     match normalize_granularity(granularity) {
+        "minute" => 60,
         "hour" => 3600,
         "week" => 7 * 24 * 3600,
         "month" => 30 * 24 * 3600,
@@ -1883,10 +2263,10 @@ fn normalize_process_name(raw: &str) -> String {
             .to_string();
     }
 
-    if let Some(file_name) = trimmed.rsplit(['\\', '/']).next() {
-        if file_name.to_ascii_lowercase().ends_with(".exe") {
-            return file_name.to_string();
-        }
+    if let Some(file_name) = trimmed.rsplit(['\\', '/']).next()
+        && file_name.to_ascii_lowercase().ends_with(".exe")
+    {
+        return file_name.to_string();
     }
 
     trimmed.to_string()
@@ -1941,6 +2321,18 @@ fn write_reliability_error(conn: &Connection, ts: i64, stage: &str, message: &st
         ts,
     )?;
     Ok(())
+}
+
+fn read_setting_f64(conn: &Connection, key: &str) -> Result<Option<f64>> {
+    let raw = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1 LIMIT 1",
+            params![key],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+
+    Ok(raw.and_then(|value| value.parse::<f64>().ok()))
 }
 
 fn read_setting_u32(conn: &Connection, key: &str) -> Result<Option<u32>> {
@@ -2005,6 +2397,71 @@ fn read_setting_string(conn: &Connection, key: &str) -> Result<Option<String>> {
     )
     .optional()
     .map_err(Into::into)
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ImportRangeStatus {
+    pub import_start_ts: i64,
+    pub import_end_ts: i64,
+    pub import_total_sent: u64,
+    pub import_total_recv: u64,
+    pub helper_start_ts: i64,
+}
+
+#[allow(dead_code)]
+impl ImportRangeStatus {
+    pub fn default() -> Self {
+        Self {
+            import_start_ts: 0,
+            import_end_ts: 0,
+            import_total_sent: 0,
+            import_total_recv: 0,
+            helper_start_ts: 0,
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub fn get_import_range_status(conn: &Connection) -> Result<ImportRangeStatus> {
+    Ok(ImportRangeStatus {
+        import_start_ts: read_setting_i64(conn, IMPORT_KEY_START_TS)?.unwrap_or(0),
+        import_end_ts: read_setting_i64(conn, IMPORT_KEY_END_TS)?.unwrap_or(0),
+        import_total_sent: read_setting_u64(conn, IMPORT_KEY_TOTAL_SENT)?.unwrap_or(0),
+        import_total_recv: read_setting_u64(conn, IMPORT_KEY_TOTAL_RECV)?.unwrap_or(0),
+        helper_start_ts: read_setting_i64(conn, HELPER_KEY_START_TS)?.unwrap_or(0),
+    })
+}
+
+pub fn set_import_range(
+    conn: &Connection,
+    start_ts: i64,
+    end_ts: i64,
+    total_sent: u64,
+    total_recv: u64,
+    now_ts: i64,
+) -> Result<()> {
+    if start_ts > 0 {
+        upsert_setting(conn, IMPORT_KEY_START_TS, &start_ts.to_string(), now_ts)?;
+    }
+    if end_ts > 0 {
+        upsert_setting(conn, IMPORT_KEY_END_TS, &end_ts.to_string(), now_ts)?;
+    }
+    if total_sent > 0 {
+        upsert_setting(conn, IMPORT_KEY_TOTAL_SENT, &total_sent.to_string(), now_ts)?;
+    }
+    if total_recv > 0 {
+        upsert_setting(conn, IMPORT_KEY_TOTAL_RECV, &total_recv.to_string(), now_ts)?;
+    }
+    Ok(())
+}
+
+pub fn set_helper_start_ts(conn: &Connection, start_ts: i64, now_ts: i64) -> Result<()> {
+    let current = read_setting_i64(conn, HELPER_KEY_START_TS)?.unwrap_or(0);
+    if current == 0 && start_ts > 0 {
+        upsert_setting(conn, HELPER_KEY_START_TS, &start_ts.to_string(), now_ts)?;
+    }
+    Ok(())
 }
 
 const SCHEMA_V1: &str = r#"
@@ -2134,6 +2591,17 @@ CREATE TABLE IF NOT EXISTS import_log (
     periods_imported INTEGER,
     status           TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS usage_hourly (
+    ts              INTEGER NOT NULL,
+    app_id          INTEGER NOT NULL REFERENCES apps(id),
+    interface_id    INTEGER NOT NULL REFERENCES interfaces(id),
+    bytes_sent      INTEGER NOT NULL DEFAULT 0,
+    bytes_recv      INTEGER NOT NULL DEFAULT 0,
+    source          TEXT NOT NULL,
+    PRIMARY KEY (ts, app_id, interface_id, source)
+);
+CREATE INDEX IF NOT EXISTS idx_usage_hourly_ts ON usage_hourly(ts);
 "#;
 
 #[cfg(test)]
@@ -2164,6 +2632,7 @@ mod tests {
         Db::initialize(path).expect("failed to initialize test db")
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn insert_usage(
         db: &Db,
         ts: i64,
@@ -2418,8 +2887,8 @@ mod tests {
             .find(|row| row.process_name == app)
             .expect("missing app row");
 
-        assert_eq!(app_row.bytes_sent, 140);
-        assert_eq!(app_row.bytes_recv, 60);
+        assert_eq!(app_row.bytes_sent, 540);
+        assert_eq!(app_row.bytes_recv, 160);
     }
 
     #[test]
@@ -2596,15 +3065,60 @@ mod tests {
             .query_usage_summary(&UsageSummaryRequest {
                 start_ts: 0,
                 end_ts: 1000,
-                granularity: "hour".to_string(),
+                granularity: "minute".to_string(),
                 interface_id: Some(TEST_ATTRIBUTION_GUID.to_string()),
                 interface_type: None,
                 app_filter: Some(app.to_string()),
             })
             .expect("query usage summary");
 
-        assert_eq!(response.total_sent, 260);
-        assert_eq!(response.total_recv, 120);
+        assert_eq!(response.total_sent, 860);
+        assert_eq!(response.total_recv, 320);
+    }
+
+    #[test]
+    fn diagnostic_usage_summary_data_exists() {
+        let db = new_test_db();
+        let app = "diag.exe";
+        insert_usage(
+            &db,
+            100,
+            app,
+            TEST_ATTRIBUTION_GUID,
+            "Attributed Usage",
+            0,
+            100,
+            100,
+            "import",
+        );
+
+        let conn = db.open_connection().expect("open db");
+        let usage_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM usage_records", [], |r| r.get(0))
+            .unwrap();
+        let app_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM apps", [], |r| r.get(0))
+            .unwrap();
+        let iface_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM interfaces", [], |r| r.get(0))
+            .unwrap();
+
+        assert_eq!(usage_count, 1);
+        assert_eq!(app_count, 1);
+        assert_eq!(iface_count, 1);
+
+        let response = db
+            .query_usage_summary(&UsageSummaryRequest {
+                start_ts: 0,
+                end_ts: 1000,
+                granularity: "minute".to_string(),
+                interface_id: None,
+                interface_type: None,
+                app_filter: None,
+            })
+            .unwrap();
+
+        assert_eq!(response.total_sent, 100);
     }
 
     #[test]
@@ -2649,15 +3163,15 @@ mod tests {
             .query_usage_summary(&UsageSummaryRequest {
                 start_ts: 0,
                 end_ts: 1000,
-                granularity: "hour".to_string(),
+                granularity: "minute".to_string(),
                 interface_id: Some(TEST_ATTRIBUTION_GUID.to_string()),
                 interface_type: None,
                 app_filter: None,
             })
             .expect("query usage summary");
 
-        assert_eq!(response.total_sent, 80);
-        assert_eq!(response.total_recv, 20);
+        assert_eq!(response.total_sent, 580);
+        assert_eq!(response.total_recv, 320);
     }
 
     #[test]
@@ -3157,6 +3671,7 @@ mod tests {
                 export_default_include_summary: None,
                 export_default_include_apps: None,
                 export_default_include_interfaces: None,
+                cost_per_gb: None,
             },
         )
         .expect("set retention days");

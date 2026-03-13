@@ -43,14 +43,14 @@ fn run() -> Result<()> {
         CloseHandle(process);
     }
 
-    if let Some(limit) = max_bytes {
-        if peak > limit {
-            return Err(anyhow!(
-                "memory limit breached: peak={} bytes, limit={} bytes",
-                peak,
-                limit
-            ));
-        }
+    if let Some(limit) = max_bytes
+        && peak > limit
+    {
+        return Err(anyhow!(
+            "memory limit breached: peak={} bytes, limit={} bytes",
+            peak,
+            limit
+        ));
     }
 
     Ok(())

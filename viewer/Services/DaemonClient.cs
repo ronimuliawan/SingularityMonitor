@@ -47,6 +47,7 @@ public sealed class DaemonClient
         bool? exportDefaultIncludeSummary = null,
         bool? exportDefaultIncludeApps = null,
         bool? exportDefaultIncludeInterfaces = null,
+        double? costPerGb = null,
         CancellationToken cancellationToken = default)
     {
         var envelope = await SendRequestAsync(
@@ -61,11 +62,70 @@ public sealed class DaemonClient
                 export_default_include_summary = exportDefaultIncludeSummary,
                 export_default_include_apps = exportDefaultIncludeApps,
                 export_default_include_interfaces = exportDefaultIncludeInterfaces,
+                cost_per_gb = costPerGb,
             },
             cancellationToken);
 
         _ = ParsePayload<JsonElement>(envelope);
     }
+
+    public async Task<UsageHeatmapResponse> GetUsageHeatmapAsync(
+        long startTs,
+        long endTs,
+        string? interfaceId = null,
+        string? interfaceType = null,
+        string? appFilter = null,
+        CancellationToken cancellationToken = default)
+    {
+        var envelope = await SendRequestAsync(
+            "GET_USAGE_HEATMAP",
+            payload: new
+            {
+                start_ts = startTs,
+                end_ts = endTs,
+                interface_id = interfaceId,
+                interface_type = interfaceType,
+                app_filter = appFilter,
+            },
+            cancellationToken);
+
+        return ParsePayload<UsageHeatmapResponse>(envelope);
+    }
+
+    public async Task<ForecastResponse> GetForecastAsync(
+        string? interfaceId = null,
+        string? interfaceType = null,
+        CancellationToken cancellationToken = default)
+    {
+        var envelope = await SendRequestAsync(
+            "GET_FORECAST",
+            payload: new
+            {
+                interface_id = interfaceId,
+                interface_type = interfaceType,
+            },
+            cancellationToken);
+
+        return ParsePayload<ForecastResponse>(envelope);
+    }
+
+    public async Task<AnomaliesResponse> GetAnomaliesAsync(
+        long startTs,
+        long endTs,
+        CancellationToken cancellationToken = default)
+    {
+        var envelope = await SendRequestAsync(
+            "GET_ANOMALIES",
+            payload: new
+            {
+                start_ts = startTs,
+                end_ts = endTs,
+            },
+            cancellationToken);
+
+        return ParsePayload<AnomaliesResponse>(envelope);
+    }
+
 
     public async Task<CompactDatabaseResponse> CompactDatabaseAsync(CancellationToken cancellationToken = default)
     {
@@ -486,6 +546,69 @@ public sealed class SettingsResponse
 
     [JsonPropertyName("export_default_include_interfaces")]
     public bool ExportDefaultIncludeInterfaces { get; set; } = true;
+
+    [JsonPropertyName("cost_per_gb")]
+    public double CostPerGb { get; set; }
+}
+
+public sealed class UsageHeatmapResponse
+{
+    [JsonPropertyName("cells")]
+    public HeatmapCell[] Cells { get; set; } = Array.Empty<HeatmapCell>();
+}
+
+public sealed class HeatmapCell
+{
+    [JsonPropertyName("day_of_week")]
+    public uint DayOfWeek { get; set; }
+
+    [JsonPropertyName("hour_of_day")]
+    public uint HourOfDay { get; set; }
+
+    [JsonPropertyName("bytes_total")]
+    public ulong BytesTotal { get; set; }
+}
+
+public sealed class ForecastResponse
+{
+    [JsonPropertyName("projected_month_end_bytes")]
+    public ulong ProjectedMonthEndBytes { get; set; }
+
+    [JsonPropertyName("daily_average_bytes")]
+    public ulong DailyAverageBytes { get; set; }
+
+    [JsonPropertyName("confidence_interval_low")]
+    public ulong ConfidenceIntervalLow { get; set; }
+
+    [JsonPropertyName("confidence_interval_high")]
+    public ulong ConfidenceIntervalHigh { get; set; }
+
+    [JsonPropertyName("projected_month_end_cost")]
+    public double ProjectedMonthEndCost { get; set; }
+}
+
+public sealed class AnomaliesResponse
+{
+    [JsonPropertyName("anomalies")]
+    public AnomalyRow[] Anomalies { get; set; } = Array.Empty<AnomalyRow>();
+}
+
+public sealed class AnomalyRow
+{
+    [JsonPropertyName("ts")]
+    public long Ts { get; set; }
+
+    [JsonPropertyName("app_id")]
+    public string AppId { get; set; } = string.Empty;
+
+    [JsonPropertyName("bytes_total")]
+    public ulong BytesTotal { get; set; }
+
+    [JsonPropertyName("expected_bytes")]
+    public ulong ExpectedBytes { get; set; }
+
+    [JsonPropertyName("z_score")]
+    public double ZScore { get; set; }
 }
 
 public sealed class UsageSummary

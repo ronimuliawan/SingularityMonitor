@@ -20,6 +20,9 @@ pub const METHOD_DELETE_CAP_DEFINITION: &str = "DELETE_CAP_DEFINITION";
 pub const METHOD_LIST_CAP_ALERT_EVENTS: &str = "LIST_CAP_ALERT_EVENTS";
 pub const METHOD_MARK_CAP_ALERT_EVENTS_DELIVERED: &str = "MARK_CAP_ALERT_EVENTS_DELIVERED";
 pub const METHOD_COMPACT_DATABASE: &str = "COMPACT_DATABASE";
+pub const METHOD_GET_USAGE_HEATMAP: &str = "GET_USAGE_HEATMAP";
+pub const METHOD_GET_FORECAST: &str = "GET_FORECAST";
+pub const METHOD_GET_ANOMALIES: &str = "GET_ANOMALIES";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -330,6 +333,7 @@ pub struct SetSettingsRequest {
     pub export_default_include_summary: Option<bool>,
     pub export_default_include_apps: Option<bool>,
     pub export_default_include_interfaces: Option<bool>,
+    pub cost_per_gb: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -342,6 +346,7 @@ pub struct SettingsResponse {
     pub export_default_include_summary: bool,
     pub export_default_include_apps: bool,
     pub export_default_include_interfaces: bool,
+    pub cost_per_gb: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -385,6 +390,8 @@ pub struct IngestAttributedUsageRequest {
     pub end_ts: i64,
     pub profile_name: Option<String>,
     pub source: Option<String>,
+    pub aggregate_sent: Option<u64>,
+    pub aggregate_recv: Option<u64>,
     pub samples: Vec<AttributedUsageSample>,
 }
 
@@ -392,4 +399,60 @@ pub struct IngestAttributedUsageRequest {
 pub struct IngestAttributedUsageResponse {
     pub accepted: u32,
     pub dropped: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageHeatmapRequest {
+    pub start_ts: i64,
+    pub end_ts: i64,
+    pub interface_id: Option<String>,
+    pub interface_type: Option<String>,
+    pub app_filter: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeatmapCell {
+    pub day_of_week: u32,
+    pub hour_of_day: u32,
+    pub bytes_total: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageHeatmapResponse {
+    pub cells: Vec<HeatmapCell>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetForecastRequest {
+    pub interface_id: Option<String>,
+    pub interface_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForecastResponse {
+    pub projected_month_end_bytes: u64,
+    pub daily_average_bytes: u64,
+    pub confidence_interval_low: u64,
+    pub confidence_interval_high: u64,
+    pub projected_month_end_cost: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetAnomaliesRequest {
+    pub start_ts: i64,
+    pub end_ts: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnomalyRow {
+    pub ts: i64,
+    pub app_id: String,
+    pub bytes_total: u64,
+    pub expected_bytes: u64,
+    pub z_score: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnomaliesResponse {
+    pub anomalies: Vec<AnomalyRow>,
 }

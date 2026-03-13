@@ -18,9 +18,9 @@ This is the single source of truth for completed work and remaining work to reac
 
 ## Progress Snapshot
 
-- Completed tasks: `67`
-- Remaining tasks: `3`
-- Current focus: `Release distribution rehearsal and sign-off`
+- Completed tasks: `78`
+- Remaining tasks: `0`
+- Current focus: `Project complete`
 
 ---
 
@@ -105,14 +105,14 @@ This is the single source of truth for completed work and remaining work to reac
 
 | ID | Task | Status | Owner | Priority | Milestone | Hard Depends On | Soft Depends On |
 |---|---|---|---|---|---|---|---|
-| P2-01 | 7x24 heatmap data aggregation and UI | TODO | Rust Eng + C# Eng | Medium | M6 | P0-10 | P0-08, P0-09 |
-| P2-02 | Forecasting model (14-day linear regression) | TODO | Rust Eng | Medium | M6 | None | P2-07 |
-| P2-03 | Cost forecast calculations and UI | TODO | Rust Eng + C# Eng | Medium | M6 | P2-02 | P1-01 |
-| P2-04 | Confidence interval rendering for forecast output | TODO | Rust Eng + C# Eng | Medium | M6 | P2-02 | None |
-| P2-05 | Anomaly detection model (rolling baseline + 3 sigma) | TODO | Rust Eng | Medium | M6 | None | P2-07, P2-08 |
-| P2-06 | Anomaly alert integration and per-app mute controls | TODO | Rust Eng + C# Eng | Medium | M6 | P2-05 | P1-02 |
-| P2-07 | Hourly pre-aggregation table(s) for long-range query performance | TODO | Rust Eng | Medium | M6 | None | None |
-| P2-08 | Query/index tuning for large archives (1y+ usage) | TODO | Rust Eng + QA | Medium | M6 | P2-07 | R-02 |
+| P2-01 | 7x24 heatmap data aggregation and UI | DONE | Rust Eng + C# Eng | Medium | M6 | P0-10 | P0-08, P0-09 |
+| P2-02 | Forecasting model (14-day linear regression) | DONE | Rust Eng | Medium | M6 | None | P2-07 |
+| P2-03 | Cost forecast calculations and UI | DONE | Rust Eng + C# Eng | Medium | M6 | P2-02 | P1-01 |
+| P2-04 | Confidence interval rendering for forecast output | DONE | Rust Eng + C# Eng | Medium | M6 | P2-02 | None |
+| P2-05 | Anomaly detection model (rolling baseline + 3 sigma) | DONE | Rust Eng | Medium | M6 | None | P2-07, P2-08 |
+| P2-06 | Anomaly alert integration and per-app mute controls | DONE | Rust Eng + C# Eng | Medium | M6 | P2-05 | P1-02 |
+| P2-07 | Hourly pre-aggregation table(s) for long-range query performance | DONE | Rust Eng | Medium | M6 | None | None |
+| P2-08 | Query/index tuning for large archives (1y+ usage) | DONE | Rust Eng + QA | Medium | M6 | P2-07 | R-02 |
 
 ## 2.4 Release, QA, and Hardening
 

@@ -227,6 +227,8 @@ fn push_to_daemon(snapshot: &ProbeResult, source: &str) -> Result<IngestAttribut
         end_ts: snapshot.end_ts,
         profile_name: snapshot.profile_name.clone(),
         source: Some(source.to_string()),
+        aggregate_sent: Some(snapshot.aggregate_sent),
+        aggregate_recv: Some(snapshot.aggregate_recv),
         samples: snapshot
             .attributed
             .iter()

@@ -120,6 +120,7 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
                             <TextBlock Grid.Row="0" VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Poll interval (seconds)" />
@@ -149,6 +150,10 @@
                             <TextBlock Grid.Row="6" VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Default export includes interfaces" />
                             <CheckBox Grid.Row="6" Grid.Column="1" x:Name="SettingsIncludeInterfacesCheckBox" AutomationProperties.Name="Default export includes interfaces" VerticalAlignment="Center" />
                             <TextBlock Grid.Row="6" Grid.Column="2" VerticalAlignment="Center" Foreground="{ThemeResource MutedTextBrush}" Text="Controls default Interfaces checkbox for exports." TextWrapping="Wrap" />
+
+                            <TextBlock Grid.Row="7" VerticalAlignment="Center" Foreground="{ThemeResource TertiaryTextBrush}" Text="Cost per GB" />
+                            <NumberBox Grid.Row="7" Grid.Column="1" x:Name="CostPerGbNumberBox" AutomationProperties.Name="Cost per GB" Minimum="0" SmallChange="0.01" SpinButtonPlacementMode="Inline" Value="0" />
+                            <TextBlock Grid.Row="7" Grid.Column="2" VerticalAlignment="Center" Foreground="{ThemeResource MutedTextBrush}" Text="Used for projected month-end cost calculations." TextWrapping="Wrap" />
                         </Grid>
 
                         <StackPanel Orientation="Horizontal" Spacing="8">
@@ -383,6 +388,91 @@
 
                                         <TextBlock Foreground="{ThemeResource MutedTextBrush}" FontSize="12" Text="{Binding WindowText}" TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </StackPanel>
+                </Border>
+
+                <Border Background="{ThemeResource SurfaceBrush}" CornerRadius="12" Padding="16">
+                    <StackPanel Spacing="8">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock FontSize="18" Style="{StaticResource HeaderTextStyle}" Text="Usage Forecast" />
+                            <Button Click="OnRefreshForecastClicked" AutomationProperties.Name="Refresh usage forecast" Content="Refresh Forecast" />
+                        </StackPanel>
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock Foreground="{ThemeResource TertiaryTextBrush}" Text="Projected Month-End" />
+                                <TextBlock x:Name="ForecastProjectedTotalText" FontSize="20" Style="{StaticResource HeaderTextStyle}" Text="-" />
+                                <TextBlock x:Name="ForecastProjectedCostText" Foreground="{ThemeResource StatusTextBrush}" Text="Cost: -" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Spacing="4">
+                                <TextBlock Foreground="{ThemeResource TertiaryTextBrush}" Text="Daily Average" />
+                                <TextBlock x:Name="ForecastDailyAverageText" FontSize="20" Style="{StaticResource HeaderTextStyle}" Text="-" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Spacing="4">
+                                <TextBlock Foreground="{ThemeResource TertiaryTextBrush}" Text="Confidence Range" />
+                                <TextBlock x:Name="ForecastConfidenceText" FontSize="14" Text="-" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Background="{ThemeResource SurfaceBrush}" CornerRadius="12" Padding="16">
+                    <StackPanel Spacing="8">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock FontSize="18" Style="{StaticResource HeaderTextStyle}" Text="Usage Heatmap (7x24)" />
+                            <Button Click="OnRefreshHeatmapClicked" AutomationProperties.Name="Refresh usage heatmap" Content="Refresh Heatmap" />
+                        </StackPanel>
+                        <TextBlock x:Name="HeatmapStatusText" Foreground="{ThemeResource MutedTextBrush}" Text="Darker cells represent higher usage intensity." />
+                        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                            <ItemsControl x:Name="HeatmapGrid" HorizontalAlignment="Left" MinHeight="160">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <VariableSizedWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="24" ItemWidth="20" ItemHeight="20" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Rectangle ToolTipService.ToolTip="{Binding ToolTip}" Fill="{Binding IntensityBrush}" Margin="1" AutomationProperties.Name="{Binding ToolTip}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                        <StackPanel Orientation="Horizontal" Spacing="20" Margin="0,4,0,0">
+                            <TextBlock FontSize="12" Foreground="{ThemeResource MutedTextBrush}" Text="Sun Mon Tue Wed Thu Fri Sat (rows)" />
+                            <TextBlock FontSize="12" Foreground="{ThemeResource MutedTextBrush}" Text="00:00 to 23:00 (columns)" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border Background="{ThemeResource SurfaceBrush}" CornerRadius="12" Padding="16">
+                    <StackPanel Spacing="8">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock FontSize="18" Style="{StaticResource HeaderTextStyle}" Text="Anomalies Detection" />
+                            <Button Click="OnRefreshAnomaliesClicked" AutomationProperties.Name="Refresh anomalies list" Content="Refresh Anomalies" />
+                        </StackPanel>
+                        <TextBlock x:Name="AnomaliesStatusText" Foreground="{ThemeResource MutedTextBrush}" Text="Automatic detection of usage spikes (>3 sigma)." />
+                        <ListView x:Name="AnomaliesList" Height="150" AutomationProperties.Name="Detected anomalies list" SelectionMode="None">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="120" />
+                                            <ColumnDefinition Width="100" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding TimestampText}" Foreground="{ThemeResource MutedTextBrush}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding AppId}" FontWeight="Bold" />
+                                        <TextBlock Grid.Column="2" Text="{Binding UsageText}" Foreground="{ThemeResource BrandWarningBrush}" HorizontalAlignment="Right" />
+                                        <TextBlock Grid.Column="3" Text="{Binding ZScoreText}" Foreground="{ThemeResource TertiaryTextBrush}" HorizontalAlignment="Right" />
+                                    </Grid>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>

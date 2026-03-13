@@ -88,7 +88,7 @@ where
 
 fn create_pipe_instance(pipe_name: &str) -> Result<HANDLE, String> {
     let name = to_wide(pipe_name);
-    let (mut security_attributes, _descriptor) = build_pipe_security_attributes()?;
+    let (security_attributes, _descriptor) = build_pipe_security_attributes()?;
     let handle = unsafe {
         CreateNamedPipeW(
             name.as_ptr(),
@@ -98,7 +98,7 @@ fn create_pipe_instance(pipe_name: &str) -> Result<HANDLE, String> {
             16 * 1024,
             16 * 1024,
             0,
-            &mut security_attributes,
+            &security_attributes,
         )
     };
 

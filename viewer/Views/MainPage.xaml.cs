@@ -1646,6 +1646,97 @@ namespace SingularityMonitor.Viewer.Views
             }
         }
 
+        private async void OnRefreshForecastClicked(object sender, RoutedEventArgs e) => await RefreshForecastAsync();
+        private async void OnRefreshHeatmapClicked(object sender, RoutedEventArgs e) => await RefreshHeatmapAsync();
+        private async void OnRefreshAnomaliesClicked(object sender, RoutedEventArgs e) => await RefreshAnomaliesAsync();
+
+        private async Task RefreshForecastAsync()
+        {
+            try
+            {
+                var interfaceId = ResolveSelectedInterfaceId();
+                var interfaceType = ResolveSelectedInterfaceType();
+                var forecast = await daemonClient.GetForecastAsync(interfaceId, interfaceType);
+
+                ForecastProjectedTotalText.Text = FormatBytes(forecast.ProjectedMonthEndBytes);
+                ForecastProjectedCostText.Text = $"Cost: {forecast.ProjectedMonthEndCost:C2}";
+                ForecastDailyAverageText.Text = FormatBytes(forecast.DailyAverageBytes);
+                ForecastConfidenceText.Text = $"{FormatBytes(forecast.ConfidenceIntervalLow)} to {FormatBytes(forecast.ConfidenceIntervalHigh)}";
+            }
+            catch (Exception ex)
+            {
+                ForecastProjectedTotalText.Text = "Error";
+                ForecastConfidenceText.Text = ex.Message;
+            }
+        }
+
+        private async Task RefreshHeatmapAsync()
+        {
+            try
+            {
+                var (startUtc, endUtc) = ResolveTopAppsRangeUtc();
+                var interfaceId = ResolveSelectedInterfaceId();
+                var interfaceType = ResolveSelectedInterfaceType();
+                var response = await daemonClient.GetUsageHeatmapAsync(
+                    startUtc.ToUnixTimeSeconds(),
+                    endUtc.ToUnixTimeSeconds(),
+                    interfaceId,
+                    interfaceType);
+
+                var cells = new HeatmapCellViewModel[7 * 24];
+                var maxUsage = response.Cells.Length > 0 ? response.Cells.Max(c => c.BytesTotal) : 0;
+
+                for (uint d = 0; d < 7; d++)
+                {
+                    for (uint h = 0; h < 24; h++)
+                    {
+                        var cell = response.Cells.FirstOrDefault(c => c.DayOfWeek == d && c.HourOfDay == h);
+                        var usage = cell?.BytesTotal ?? 0;
+                        var intensity = maxUsage == 0 ? 0 : (double)usage / maxUsage;
+                        var dayName = ((DayOfWeek)d).ToString();
+
+                        cells[d * 24 + h] = new HeatmapCellViewModel
+                        {
+                            ToolTip = $"{dayName} {h:D2}:00 - {FormatBytes(usage)}",
+                            IntensityBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(
+                                (byte)(20 + (intensity * 235)), 0, 120, 215))
+                        };
+                    }
+                }
+
+                HeatmapGrid.ItemsSource = cells;
+                HeatmapStatusText.Text = $"Showing 7x24 usage pattern for {cells.Length} slots.";
+            }
+            catch (Exception ex)
+            {
+                HeatmapStatusText.Text = $"Failed to load heatmap: {ex.Message}";
+            }
+        }
+
+        private async Task RefreshAnomaliesAsync()
+        {
+            try
+            {
+                var (startUtc, endUtc) = ResolveTopAppsRangeUtc();
+                var response = await daemonClient.GetAnomaliesAsync(startUtc.ToUnixTimeSeconds(), endUtc.ToUnixTimeSeconds());
+
+                var rows = response.Anomalies.Select(a => new AnomalyDisplayRow
+                {
+                    TimestampText = DateTimeOffset.FromUnixTimeSeconds(a.Ts).ToLocalTime().ToString("g"),
+                    AppId = a.AppId,
+                    UsageText = FormatBytes(a.BytesTotal),
+                    ZScoreText = $"Z: {a.ZScore:F1}"
+                }).ToList();
+
+                AnomaliesList.ItemsSource = rows;
+                AnomaliesStatusText.Text = rows.Count == 0 ? "No anomalies detected." : $"Detected {rows.Count} anomalies.";
+            }
+            catch (Exception ex)
+            {
+                AnomaliesStatusText.Text = $"Failed to load anomalies: {ex.Message}";
+            }
+        }
+
         private AlertHistoryRow BuildAlertHistoryRow(Services.CapAlertEvent alert)
         {
             var state = string.IsNullOrWhiteSpace(alert.DeliveryState)
@@ -2942,6 +3033,20 @@ namespace SingularityMonitor.Viewer.Views
             public string SplitText { get; init; } = string.Empty;
 
             public string LastSeenText { get; init; } = string.Empty;
+        }
+
+        public sealed class HeatmapCellViewModel
+        {
+            public string ToolTip { get; init; } = string.Empty;
+            public Microsoft.UI.Xaml.Media.Brush IntensityBrush { get; init; } = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        }
+
+        public sealed class AnomalyDisplayRow
+        {
+            public string TimestampText { get; init; } = string.Empty;
+            public string AppId { get; init; } = string.Empty;
+            public string UsageText { get; init; } = string.Empty;
+            public string ZScoreText { get; init; } = string.Empty;
         }
     }
 }

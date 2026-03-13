@@ -8,9 +8,10 @@ use crate::time::unix_timestamp;
 use anyhow::Result;
 use shared_contracts::{
     AppBreakdownRequest, CompactDatabaseRequest, DaemonStatusResponse, DeleteCapDefinitionRequest,
-    GetAfkAuditRequest, IngestAttributedUsageRequest, InterfaceBreakdownRequest, IpcMessage,
-    ListCapAlertEventsRequest, MarkCapAlertEventsDeliveredRequest, SetImportStatusRequest,
-    SetSettingsRequest, TimeRangeRequest, UpsertCapDefinitionRequest, UsageSummaryRequest,
+    GetAfkAuditRequest, GetAnomaliesRequest, GetForecastRequest, IngestAttributedUsageRequest,
+    InterfaceBreakdownRequest, IpcMessage, ListCapAlertEventsRequest,
+    MarkCapAlertEventsDeliveredRequest, SetImportStatusRequest, SetSettingsRequest,
+    TimeRangeRequest, UpsertCapDefinitionRequest, UsageHeatmapRequest, UsageSummaryRequest,
 };
 use std::fs::OpenOptions;
 use std::mem::size_of;
@@ -134,6 +135,72 @@ impl IpcRequestHandler for RuntimeContext {
                     Ok(payload) => match self.db.query_usage_summary(&payload) {
                         Ok(summary) => {
                             IpcMessage::response(&request, summary).unwrap_or_else(|error| {
+                                IpcMessage::error_response(
+                                    &request,
+                                    500,
+                                    format!("encode failed: {error}"),
+                                )
+                            })
+                        }
+                        Err(error) => IpcMessage::error_response(&request, 500, error.to_string()),
+                    },
+                    Err(error) => IpcMessage::error_response(
+                        &request,
+                        400,
+                        format!("invalid payload: {error}"),
+                    ),
+                }
+            }
+            shared_contracts::METHOD_GET_USAGE_HEATMAP => {
+                let parsed = serde_json::from_value::<UsageHeatmapRequest>(request.payload.clone());
+                match parsed {
+                    Ok(payload) => match self.db.query_usage_heatmap(&payload) {
+                        Ok(heatmap) => {
+                            IpcMessage::response(&request, heatmap).unwrap_or_else(|error| {
+                                IpcMessage::error_response(
+                                    &request,
+                                    500,
+                                    format!("encode failed: {error}"),
+                                )
+                            })
+                        }
+                        Err(error) => IpcMessage::error_response(&request, 500, error.to_string()),
+                    },
+                    Err(error) => IpcMessage::error_response(
+                        &request,
+                        400,
+                        format!("invalid payload: {error}"),
+                    ),
+                }
+            }
+            shared_contracts::METHOD_GET_FORECAST => {
+                let parsed = serde_json::from_value::<GetForecastRequest>(request.payload.clone());
+                match parsed {
+                    Ok(payload) => match self.db.query_forecast(&payload) {
+                        Ok(forecast) => {
+                            IpcMessage::response(&request, forecast).unwrap_or_else(|error| {
+                                IpcMessage::error_response(
+                                    &request,
+                                    500,
+                                    format!("encode failed: {error}"),
+                                )
+                            })
+                        }
+                        Err(error) => IpcMessage::error_response(&request, 500, error.to_string()),
+                    },
+                    Err(error) => IpcMessage::error_response(
+                        &request,
+                        400,
+                        format!("invalid payload: {error}"),
+                    ),
+                }
+            }
+            shared_contracts::METHOD_GET_ANOMALIES => {
+                let parsed = serde_json::from_value::<GetAnomaliesRequest>(request.payload.clone());
+                match parsed {
+                    Ok(payload) => match self.db.query_anomalies(&payload) {
+                        Ok(anomalies) => {
+                            IpcMessage::response(&request, anomalies).unwrap_or_else(|error| {
                                 IpcMessage::error_response(
                                     &request,
                                     500,
@@ -381,10 +448,10 @@ impl IpcRequestHandler for RuntimeContext {
                         let ts = unix_timestamp();
                         match self.db.apply_settings(ts, &payload) {
                             Ok(()) => {
-                                if let Some(interval) = payload.poll_interval_seconds {
-                                    if let Ok(mut state) = self.state.lock() {
-                                        state.poll_interval_seconds = interval.clamp(15, 300);
-                                    }
+                                if let Some(interval) = payload.poll_interval_seconds
+                                    && let Ok(mut state) = self.state.lock()
+                                {
+                                    state.poll_interval_seconds = interval.clamp(15, 300);
                                 }
 
                                 IpcMessage::response(&request, serde_json::json!({ "ok": true }))
@@ -682,6 +749,9 @@ impl CollectorRuntime {
         if let Err(error) = self.db.run_retention_cleanup_if_due(current_ts) {
             warn!("failed to run retention cleanup: {error:#}");
         }
+        if let Err(error) = self.db.run_hourly_aggregation_if_due(current_ts) {
+            warn!("failed to run hourly aggregation: {error:#}");
+        }
 
         if self.config.trim_working_set {
             let _ = memory::trim_working_set();
@@ -852,7 +922,8 @@ mod tests {
                     "export_default_granularity": "day",
                     "export_default_include_summary": true,
                     "export_default_include_apps": true,
-                    "export_default_include_interfaces": true
+                    "export_default_include_interfaces": true,
+                    "cost_per_gb": 0.0
                 }),
             ),
             (
@@ -1045,6 +1116,7 @@ mod tests {
     }
 }
 
+#[allow(clippy::items_after_test_module)]
 pub fn init_logging(config: &AppConfig) -> Result<()> {
     let log_file = OpenOptions::new()
         .create(true)
